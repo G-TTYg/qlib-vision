@@ -4,6 +4,8 @@ from qlib.utils import exists_qlib_data, init_instance_by_config
 from qlib.workflow import R
 from qlib.contrib.evaluate import backtest_daily
 from qlib.contrib.strategy import TopkDropoutStrategy
+from qlib.workflow import R
+from qlib.workflow.record_temp import SignalRecord, PortAnaRecord, SigAnaRecord
 from pathlib import Path
 import yaml
 import streamlit as st
@@ -156,3 +158,65 @@ def get_historical_prediction(model_path_str: str, qlib_dir: str, stock_id: str,
             continue
 
     return pd.DataFrame(all_scores)
+
+def evaluate_model(model_path_str: str, qlib_dir: str):
+    """
+    Evaluate a trained model using qlib's standard analysis recorders.
+    Returns a dictionary containing signal analysis and portfolio analysis results.
+    """
+    model_path = Path(model_path_str)
+    config_path = model_path.with_suffix(".yaml")
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file {config_path} not found for model {model_path.name}")
+    with open(config_path, 'r') as f:
+        config = yaml.load(f, Loader=yaml.FullLoader)
+
+    provider_uri = str(Path(qlib_dir).expanduser())
+    if not exists_qlib_data(provider_uri):
+        raise FileNotFoundError("Qlib data not found.")
+    qlib.init(provider_uri=provider_uri, region=REG_CN)
+
+    with open(model_path, 'rb') as f:
+        model = pickle.load(f)
+
+    dataset = init_instance_by_config(config["dataset"])
+
+    # The test period is defined in the model's config file
+    test_period = config["dataset"]["kwargs"]["segments"]["test"]
+
+    port_analysis_config = {
+        "executor": {
+            "class": "SimulatorExecutor",
+            "module_path": "qlib.backtest.executor",
+            "kwargs": { "time_per_step": "day", "generate_portfolio_metrics": True, },
+        },
+        "strategy": {
+            "class": "TopkDropoutStrategy",
+            "module_path": "qlib.contrib.strategy.signal_strategy",
+            "kwargs": { "signal": (model, dataset), "topk": 50, "n_drop": 5, },
+        },
+        "backtest": {
+            "start_time": test_period[0],
+            "end_time": test_period[1],
+            "account": 100000000,
+            "benchmark": "SH000300",
+            "exchange_kwargs": { "freq": "day", "limit_threshold": 0.095, "deal_price": "close", "open_cost": 0.0005, "close_cost": 0.0015, "min_cost": 5, },
+        },
+    }
+
+    with R.start(experiment_name="model_evaluation", recorder_name="InMemoryRecorder", resume=True):
+        recorder = R.get_recorder()
+
+        # 1. Signal Analysis
+        sr = SignalRecord(model, dataset, recorder)
+        sr.generate()
+        sar = SigAnaRecord(recorder, ana_long_short=False)
+        sar.generate()
+        signal_report = recorder.load_object("sig_ana/report_normal.pkl")
+
+        # 2. Portfolio Analysis
+        par = PortAnaRecord(recorder, port_analysis_config, "day")
+        par.generate()
+        portfolio_report = recorder.load_object("port_ana/report_normal.pkl")
+
+    return {"signal": signal_report, "portfolio": portfolio_report}

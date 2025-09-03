@@ -4,7 +4,8 @@ from qlib.constant import REG_CN
 from pathlib import Path
 from qlib_utils import (
     SUPPORTED_MODELS, train_model, predict, backtest_strategy,
-    update_daily_data, check_data_health, get_historical_prediction
+    update_daily_data, check_data_health, get_historical_prediction,
+    evaluate_model
 )
 import pandas as pd
 import plotly.express as px
@@ -15,7 +16,12 @@ import copy
 
 def data_management_page():
     st.header("数据管理")
-    st.markdown("在这里，您可以下载、更新和检查 Qlib 所需的股票数据。")
+    st.markdown("""
+    本页面提供Qlib所需数据的管理功能。请遵循以下步骤：
+    - **首次使用者**: 请先按照“全量数据部署”中的指引，通过命令行手动下载并解压数据。这是最稳定、最推荐的初始化方式。
+    - **日常使用者**: 如果您已经部署了全量数据，可以使用“增量更新”功能来获取最新数据。
+    - **数据检查**: 您可以使用“健康度检查”来验证本地数据的完整性。
+    """)
 
     # Initialize session state for logs
     if "data_log" not in st.session_state:
@@ -25,24 +31,24 @@ def data_management_page():
     qlib_dir = st.text_input("Qlib 数据存储根路径", default_path, key="data_dir_dm")
     qlib_1d_dir = str(Path(qlib_dir) / "cn_data")
 
-    st.subheader("1. 全量数据部署 (首次使用)")
-    st.info("由于直接从雅虎财经大量下载数据不稳定，推荐通过以下步骤手动下载社区提供的数据包来完成首次数据部署。")
-    st.markdown("""
-    **请在您的终端中依次执行以下命令：**
-    ```bash
-    # 1. 下载社区提供的预处理数据包
-    wget https://github.com/chenditc/investment_data/releases/latest/download/qlib_bin.tar.gz
-    # 2. 创建用于存放数据的目录 (如果不存在)
-    mkdir -p ~/.qlib/qlib_data/cn_data
-    # 3. 解压数据包到指定目录
-    tar -zxvf qlib_bin.tar.gz -C ~/.qlib/qlib_data/cn_data --strip-components=1
-    # 4. (可选) 清理下载的压缩包
-    rm -f qlib_bin.tar.gz
-    ```
-    """)
+    with st.expander("1. 全量数据部署 (首次使用)", expanded=True):
+        st.info("由于直接从雅虎财经大量下载数据不稳定，推荐通过以下步骤手动下载社区提供的数据包来完成首次数据部署。")
+        st.markdown("""
+        **请在您的终端中依次执行以下命令：**
+        ```bash
+        # 1. 下载社区提供的预处理数据包
+        wget https://github.com/chenditc/investment_data/releases/latest/download/qlib_bin.tar.gz
+        # 2. 创建用于存放数据的目录 (如果不存在)
+        mkdir -p ~/.qlib/qlib_data/cn_data
+        # 3. 解压数据包到指定目录
+        tar -zxvf qlib_bin.tar.gz -C ~/.qlib/qlib_data/cn_data --strip-components=1
+        # 4. (可选) 清理下载的压缩包
+        rm -f qlib_bin.tar.gz
+        ```
+        """)
 
     st.subheader("2. 增量更新与健康度检查")
-    st.info("如果已有全量数据，可在此处更新到指定日期，或检查本地数据的完整性和质量。")
+    st.markdown("如果已有全量数据，可在此处更新到指定日期，或检查本地数据的完整性和质量。所有执行日志都会显示在下方。")
 
     log_placeholder = st.empty()
     log_placeholder.code(st.session_state.data_log, language='log')
@@ -76,6 +82,13 @@ def data_management_page():
 
 def model_training_page():
     st.header("模型训练")
+    st.markdown("""
+    在这里，您可以训练自己的量化模型。
+    - **模型与因子**: Qlib提供了多种内置模型（如LightGBM, XGBoost等）和因子（如Alpha158, Alpha360）。
+    - **股票池**: 您可以选择在不同的股票池（如沪深300, 中证500）上进行训练。
+    - **训练模式**: 您可以从零开始训练一个全新的模型，或者在已有的模型基础上进行增量训练（Finetune）。
+    - **超参数**: 对于GBDT类的模型，您可以方便地调节树的数量、深度、学习率等关键超参数。
+    """)
 
     if "training_status" not in st.session_state:
         st.session_state.training_status = None
@@ -137,6 +150,11 @@ def model_training_page():
 
 def prediction_page():
     st.header("投资组合预测")
+    st.markdown("""
+    本页面提供两种预测模式：
+    - **多模型对比预测**: 选择多个模型，对单一日期的所有股票进行打分。您可以查看分数的数据表，以及Top-10股票的分数对比图。这有助于横向比较不同模型在同一时间点上的优劣。
+    - **单一股票历史分数追踪**: 选择一个模型和一只股票，查看该模型在过去一段时间内对这只股票的评分变化。这有助于分析模型对特定股票的判断是否具有时间上的一致性。
+    """)
 
     # Initialize session state
     if "pred_results" not in st.session_state:
@@ -154,7 +172,7 @@ def prediction_page():
         st.warning(f"在 '{models_dir_path}' 中未找到模型。")
         return
 
-    st.subheader("多模型对比预测 (单日)")
+    st.subheader("1. 多模型对比预测 (单日)")
     selected_models = st.multiselect("选择一个或多个模型进行对比预测", available_models)
     prediction_date = st.date_input("选择预测日期", datetime.date.today() - datetime.timedelta(days=1))
 
@@ -184,7 +202,7 @@ def prediction_page():
         st.dataframe(st.session_state.pred_results["df"])
         st.plotly_chart(st.session_state.pred_results["fig"], use_container_width=True)
 
-    st.subheader("单一股票历史分数追踪")
+    st.subheader("2. 单一股票历史分数追踪")
     col1, col2 = st.columns(2)
     single_model_name = col1.selectbox("选择用于追踪的模型", available_models, key="single_model_select")
     stock_id_input = col2.text_input("输入股票代码 (例如 SH600519)", "SH600519")
@@ -219,7 +237,13 @@ def prediction_page():
 
 def backtesting_page():
     st.header("策略回测")
-    st.markdown("使用模型进行历史回测，以评估策略表现。")
+    st.markdown("""
+    本页面基于您训练好的模型，进行Top-K选股并持有N天的交易策略，在指定的历史时间段内进行模拟交易，以评估模型的实战表现。
+    - **回测参数**: 设置回测的开始和结束日期。
+    - **策略参数**: `Top-K`指每日买入模型评分最高的K只股票，`持有期`指每只股票买入后持有N天再卖出。
+    - **交易参数**: 您可以设置交易的手续费率和最低费用，以更真实地模拟交易成本。
+    最终会生成策略的详细绩效指标（年化收益、夏普比率、最大回撤等）和资金曲线图。
+    """)
 
     if "backtest_results" not in st.session_state:
         st.session_state.backtest_results = None
@@ -277,15 +301,74 @@ def backtesting_page():
         st.subheader("资金曲线")
         st.plotly_chart(st.session_state.backtest_results["fig"], use_container_width=True)
 
+def model_evaluation_page():
+    st.header("模型评估")
+    st.markdown("""
+    本页面对单个模型进行全面的性能评估，包含两个核心部分：
+    - **信号分析 (Signal Analysis)**: 评估模型预测信号（即股票分数）自身的质量，如IC、Rank IC等。这反映了模型的预测能力，与具体交易策略无关。
+    - **组合分析 (Portfolio Analysis)**: 基于模型信号，运行一个标准的Top-K策略，并分析该策略的绩效。这反映了模型在模拟实战中的表现，包含年化收益、夏普比率、最大回撤等指标。
+    """)
+
+    if "eval_results" not in st.session_state:
+        st.session_state.eval_results = None
+
+    default_data_path = str(Path.home() / ".qlib" / "qlib_data" / "cn_data")
+    default_models_path = str(Path.home() / "qlib_models")
+    models_dir = st.text_input("模型所在目录", default_models_path, key="models_dir_eval")
+    qlib_dir = st.text_input("Qlib 数据存储路径", default_data_path, key="data_dir_eval")
+    models_dir_path = Path(models_dir).expanduser()
+    available_models = [f.name for f in models_dir_path.glob("*.pkl")] if models_dir_path.exists() else []
+    if not available_models:
+        st.warning(f"在 '{models_dir_path}' 中未找到模型。")
+        return
+
+    selected_model_name = st.selectbox("选择一个模型文件进行评估", available_models, key="eval_model_select")
+
+    if st.button("开始评估", key="btn_eval"):
+        if not selected_model_name:
+            st.warning("请选择一个模型。")
+            st.session_state.eval_results = None
+        else:
+            with st.spinner("正在执行评估，这可能需要几分钟时间..."):
+                try:
+                    model_path = str(models_dir_path / selected_model_name)
+                    results = evaluate_model(model_path, qlib_dir)
+                    st.session_state.eval_results = results
+                except Exception as e:
+                    st.error(f"评估过程中发生错误: {e}")
+                    st.session_state.eval_results = None
+
+    if st.session_state.eval_results:
+        st.success("模型评估完成！")
+
+        st.subheader("1. 信号分析 (Signal Analysis)")
+        signal_report = st.session_state.eval_results["signal"]
+        st.dataframe(signal_report)
+
+        st.subheader("2. 组合分析 (Portfolio Analysis)")
+        portfolio_report = st.session_state.eval_results["portfolio"]
+
+        st.markdown("**关键绩效指标 (KPIs)**")
+        metrics = portfolio_report.loc["excess_return_with_cost"]
+        kpi_cols = st.columns(4)
+        kpi_cols[0].metric("年化收益率", f"{metrics['annualized_return']:.2%}")
+        kpi_cols[1].metric("夏普比率", f"{metrics['information_ratio']:.2f}")
+        kpi_cols[2].metric("最大回撤", f"{metrics['max_drawdown']:.2%}")
+        kpi_cols[3].metric("换手率", f"{metrics['turnover_rate']:.2f}")
+
+        st.markdown("**详细回测报告**")
+        st.dataframe(portfolio_report)
+
 def main():
     st.set_page_config(layout="wide", page_title="Qlib 可视化工具")
     st.sidebar.image("https://avatars.githubusercontent.com/u/65423353?s=200&v=4", width=100)
     st.sidebar.title("Qlib 可视化面板")
-    page_options = ["数据管理", "模型训练", "投资组合预测", "策略回测"]
-    page = st.sidebar.radio("选择功能页面", page_options, horizontal=True)
+    page_options = ["数据管理", "模型训练", "投资组合预测", "模型评估", "策略回测"]
+    page = st.sidebar.radio("选择功能页面", page_options) # horizontal=True
     if page == "数据管理": data_management_page()
     elif page == "模型训练": model_training_page()
     elif page == "投资组合预测": prediction_page()
+    elif page == "模型评估": model_evaluation_page()
     elif page == "策略回测": backtesting_page()
 
 if __name__ == "__main__":
