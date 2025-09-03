@@ -16,6 +16,11 @@ import copy
 def data_management_page():
     st.header("数据管理")
     st.markdown("在这里，您可以下载、更新和检查 Qlib 所需的股票数据。")
+
+    # Initialize session state for logs
+    if "data_log" not in st.session_state:
+        st.session_state.data_log = ""
+
     default_path = str(Path.home() / ".qlib" / "qlib_data")
     qlib_dir = st.text_input("Qlib 数据存储根路径", default_path, key="data_dir_dm")
     qlib_1d_dir = str(Path(qlib_dir) / "cn_data")
@@ -27,51 +32,60 @@ def data_management_page():
     ```bash
     # 1. 下载社区提供的预处理数据包
     wget https://github.com/chenditc/investment_data/releases/latest/download/qlib_bin.tar.gz
-
     # 2. 创建用于存放数据的目录 (如果不存在)
     mkdir -p ~/.qlib/qlib_data/cn_data
-
     # 3. 解压数据包到指定目录
     tar -zxvf qlib_bin.tar.gz -C ~/.qlib/qlib_data/cn_data --strip-components=1
-
     # 4. (可选) 清理下载的压缩包
     rm -f qlib_bin.tar.gz
     ```
     """)
 
-    st.subheader("2. 增量更新 (日常使用)")
-    st.info("如果已有全量数据，可在此处更新到指定日期（使用雅虎财经接口）。")
-    log_placeholder_update = st.empty()
+    st.subheader("2. 增量更新与健康度检查")
+    st.info("如果已有全量数据，可在此处更新到指定日期，或检查本地数据的完整性和质量。")
+
+    log_placeholder = st.empty()
+    log_placeholder.code(st.session_state.data_log, language='log')
+
     col1, col2 = st.columns(2)
     start_date = col1.date_input("更新开始日期", datetime.date.today() - datetime.timedelta(days=7))
     end_date = col2.date_input("更新结束日期", datetime.date.today())
-    if st.button("开始增量更新"):
+
+    c1, c2, c3 = st.columns([1, 1, 5])
+    if c1.button("开始增量更新"):
+        st.session_state.data_log = "" # Clear previous logs
+        log_placeholder.code(st.session_state.data_log, language='log') # Clear display
         with st.spinner(f"正在更新从 {start_date.strftime('%Y-%m-%d')} 到 {end_date.strftime('%Y-%m-%d')} 的数据..."):
             try:
-                update_daily_data(qlib_1d_dir, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), log_placeholder_update)
+                update_daily_data(qlib_1d_dir, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), "data_log")
                 st.success("增量更新命令已成功执行！")
             except Exception as e:
                 st.error(f"增量更新过程中发生错误: {e}")
+        log_placeholder.code(st.session_state.data_log, language='log') # Update display with final logs
 
-    st.subheader("3. 数据健康度检查")
-    st.info("检查本地数据的完整性和质量。")
-    log_placeholder_check = st.empty()
-    if st.button("开始检查数据健康度"):
+    if c2.button("开始检查数据"):
+        st.session_state.data_log = "" # Clear previous logs
+        log_placeholder.code(st.session_state.data_log, language='log') # Clear display
         with st.spinner("正在检查数据..."):
             try:
-                check_data_health(qlib_1d_dir, log_placeholder_check)
+                check_data_health(qlib_1d_dir, "data_log")
                 st.success("数据健康度检查已完成！详情请查看上方日志。")
             except Exception as e:
                 st.error(f"检查过程中发生错误: {e}")
+        log_placeholder.code(st.session_state.data_log, language='log') # Update display with final logs
 
 def model_training_page():
     st.header("模型训练")
+
+    if "training_status" not in st.session_state:
+        st.session_state.training_status = None
+
     default_data_path = str(Path.home() / ".qlib" / "qlib_data" / "cn_data")
     default_models_path = str(Path.home() / "qlib_models")
     qlib_dir = st.text_input("Qlib 数据存储路径", default_data_path, key="data_dir_train")
     models_save_dir = st.text_input("训练后模型的保存路径", default_models_path)
     st.subheader("1. 训练模式与模型配置")
-    train_mode = st.radio("选择训练模式", ["从零开始新训练", "在旧模型上继续训练 (Finetune)"], key="train_mode", horizontal=True)
+    train_mode = st.radio("选择训练模式", ["从零开始新训练", "在旧模型上继续训练 (Finetune)"], key="train_mode", horizontal=True, on_change=lambda: setattr(st.session_state, 'training_status', None))
     finetune_model_path = None
     if train_mode == "在旧模型上继续训练 (Finetune)":
         finetune_model_dir = st.text_input("要加载的旧模型所在目录", default_models_path, key="finetune_dir")
@@ -103,17 +117,33 @@ def model_training_page():
             params['learning_rate'] = st.slider("学习率", 0.01, 0.2, params.get('learning_rate', 0.05), 0.01, key=f"lr_{model_name_key}")
         elif "ALSTM" in model_name_key:
             st.info("ALSTM模型的超参数调节暂未在此界面支持。")
-    if st.button("开始训练"):
+
+    if st.button("开始训练", key="btn_train"):
+        st.session_state.training_status = None # Reset status on new run
         with st.spinner("正在训练模型，此过程可能需要较长时间，请耐心等待..."):
             try:
                 saved_path = train_model(model_name_key, qlib_dir, models_save_dir, config, custom_model_name if custom_model_name else None, stock_pool, finetune_model_path)
-                st.success(f"模型训练成功！已保存至: {saved_path}")
-                st.balloons()
+                st.session_state.training_status = {"status": "success", "message": f"模型训练成功！已保存至: {saved_path}"}
             except Exception as e:
-                st.error(f"训练过程中发生错误: {e}")
+                st.session_state.training_status = {"status": "error", "message": f"训练过程中发生错误: {e}"}
+
+    if st.session_state.training_status:
+        status = st.session_state.training_status
+        if status["status"] == "success":
+            st.success(status["message"])
+            st.balloons()
+        elif status["status"] == "error":
+            st.error(status["message"])
 
 def prediction_page():
     st.header("投资组合预测")
+
+    # Initialize session state
+    if "pred_results" not in st.session_state:
+        st.session_state.pred_results = None
+    if "hist_results" not in st.session_state:
+        st.session_state.hist_results = None
+
     default_data_path = str(Path.home() / ".qlib" / "qlib_data" / "cn_data")
     default_models_path = str(Path.home() / "qlib_models")
     models_dir = st.text_input("模型所在目录", default_models_path, key="models_dir_pred")
@@ -127,7 +157,8 @@ def prediction_page():
     st.subheader("多模型对比预测 (单日)")
     selected_models = st.multiselect("选择一个或多个模型进行对比预测", available_models)
     prediction_date = st.date_input("选择预测日期", datetime.date.today() - datetime.timedelta(days=1))
-    if st.button("执行对比预测") and selected_models:
+
+    if st.button("执行对比预测", key="btn_pred") and selected_models:
         with st.spinner("正在执行预测..."):
             try:
                 all_preds = []
@@ -137,17 +168,21 @@ def prediction_page():
                     pred_df = pred_df.rename(columns={"score": f"score_{model_name.replace('.pkl', '')}"})
                     all_preds.append(pred_df.set_index('StockID')[f"score_{model_name.replace('.pkl', '')}"])
                 combined_df = pd.concat(all_preds, axis=1).reset_index()
-                st.success("预测完成！")
-                st.dataframe(combined_df)
                 score_cols = [col for col in combined_df.columns if 'score' in col]
                 combined_df['average_score'] = combined_df[score_cols].mean(axis=1)
                 top_10_stocks = combined_df.nlargest(10, 'average_score')
                 plot_df = top_10_stocks.melt(id_vars=['StockID'], value_vars=score_cols, var_name='Model', value_name='Score')
                 plot_df['Model'] = plot_df['Model'].str.replace('score_', '')
                 fig = px.bar(plot_df, x="StockID", y="Score", color="Model", barmode='group', title="Top-10 股票多模型分数对比")
-                st.plotly_chart(fig, use_container_width=True)
+                st.session_state.pred_results = {"df": combined_df, "fig": fig}
             except Exception as e:
                 st.error(f"预测过程中发生错误: {e}")
+                st.session_state.pred_results = None
+
+    if st.session_state.pred_results:
+        st.success("预测完成！")
+        st.dataframe(st.session_state.pred_results["df"])
+        st.plotly_chart(st.session_state.pred_results["fig"], use_container_width=True)
 
     st.subheader("单一股票历史分数追踪")
     col1, col2 = st.columns(2)
@@ -156,26 +191,39 @@ def prediction_page():
     col3, col4 = st.columns(2)
     hist_start_date = col3.date_input("追踪开始日期", datetime.date.today() - datetime.timedelta(days=90))
     hist_end_date = col4.date_input("追踪结束日期", datetime.date.today() - datetime.timedelta(days=1))
-    if st.button("开始追踪"):
+
+    if st.button("开始追踪", key="btn_hist"):
         if not single_model_name or not stock_id_input:
             st.warning("请选择一个模型并输入股票代码。")
+            st.session_state.hist_results = None
         else:
             with st.spinner(f"正在为股票 {stock_id_input} 获取历史分数..."):
                 try:
                     single_model_path = str(models_dir_path / single_model_name)
                     hist_df = get_historical_prediction(single_model_path, qlib_dir, stock_id_input.upper(), str(hist_start_date), str(hist_end_date))
                     if hist_df.empty:
-                        st.warning("在指定时间段内未能获取到该股票的有效预测分数。")
+                        st.session_state.hist_results = {"status": "empty"}
                     else:
-                        st.success("历史分数追踪完成！")
                         fig = px.line(hist_df, x="Date", y="Score", title=f"模型 {single_model_name} 对 {stock_id_input} 的历史评分")
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.session_state.hist_results = {"df": hist_df, "fig": fig, "status": "ok"}
                 except Exception as e:
                     st.error(f"历史分数追踪过程中发生错误: {e}")
+                    st.session_state.hist_results = None
+
+    if st.session_state.hist_results:
+        if st.session_state.hist_results["status"] == "ok":
+            st.success("历史分数追踪完成！")
+            st.plotly_chart(st.session_state.hist_results["fig"], use_container_width=True)
+        elif st.session_state.hist_results["status"] == "empty":
+            st.warning("在指定时间段内未能获取到该股票的有效预测分数。")
 
 def backtesting_page():
     st.header("策略回测")
     st.markdown("使用模型进行历史回测，以评估策略表现。")
+
+    if "backtest_results" not in st.session_state:
+        st.session_state.backtest_results = None
+
     default_data_path = str(Path.home() / ".qlib" / "qlib_data" / "cn_data")
     default_models_path = str(Path.home() / "qlib_models")
     models_dir = st.text_input("模型所在目录", default_models_path, key="models_dir_bt")
@@ -200,28 +248,34 @@ def backtesting_page():
     open_cost = c1.number_input("开仓手续费率", 0.0, 0.01, 0.0005, format="%.4f")
     close_cost = c2.number_input("平仓手续费率", 0.0, 0.01, 0.0015, format="%.4f")
     min_cost = c3.number_input("最低手续费", 0, 10, 5)
-    if st.button("开始回测"):
+    if st.button("开始回测", key="btn_bt"):
         if start_date >= end_date:
             st.error("开始日期必须早于结束日期！")
+            st.session_state.backtest_results = None
         else:
             strategy_kwargs = {"topk": topk, "n_drop": n_drop}
             exchange_kwargs = {"open_cost": open_cost, "close_cost": close_cost, "min_cost": min_cost, "deal_price": "close"}
             with st.spinner("正在回测..."):
                 try:
                     report_df = backtest_strategy(selected_model_path, qlib_dir, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), strategy_kwargs, exchange_kwargs)
-                    st.success("回测完成！")
-                    st.subheader("绩效指标")
-                    metrics = report_df.loc["excess_return_with_cost"]
-                    kpi_cols = st.columns(4)
-                    kpi_cols[0].metric("年化收益率", f"{metrics['annualized_return']:.2%}")
-                    kpi_cols[1].metric("夏普比率", f"{metrics['information_ratio']:.2f}")
-                    kpi_cols[2].metric("最大回撤", f"{metrics['max_drawdown']:.2%}")
-                    kpi_cols[3].metric("换手率", f"{metrics['turnover_rate']:.2f}")
-                    st.subheader("资金曲线")
-                    fig = px.line(report_df.index, y=report_df.values, title="策略 vs. 基准")
-                    st.plotly_chart(fig, use_container_width=True)
+                    fig = px.line(report_df, x=report_df.index, y=report_df.columns, title="策略 vs. 基准")
+                    st.session_state.backtest_results = {"report": report_df, "fig": fig}
                 except Exception as e:
                     st.error(f"回测过程中发生错误: {e}")
+                    st.session_state.backtest_results = None
+
+    if st.session_state.backtest_results:
+        st.success("回测完成！")
+        st.subheader("绩效指标")
+        report_df = st.session_state.backtest_results["report"]
+        metrics = report_df.loc["excess_return_with_cost"]
+        kpi_cols = st.columns(4)
+        kpi_cols[0].metric("年化收益率", f"{metrics['annualized_return']:.2%}")
+        kpi_cols[1].metric("夏普比率", f"{metrics['information_ratio']:.2f}")
+        kpi_cols[2].metric("最大回撤", f"{metrics['max_drawdown']:.2%}")
+        kpi_cols[3].metric("换手率", f"{metrics['turnover_rate']:.2f}")
+        st.subheader("资金曲线")
+        st.plotly_chart(st.session_state.backtest_results["fig"], use_container_width=True)
 
 def main():
     st.set_page_config(layout="wide", page_title="Qlib 可视化工具")

@@ -40,29 +40,30 @@ def get_script_path(script_name):
              raise FileNotFoundError(f"Script '{script_name}' not found. Please ensure the 'scripts' folder from the Qlib GitHub repository is in the same directory as the application.")
     return str(script_path)
 
-def run_command_with_log(command, log_placeholder):
-    log_text = f"Running command: {command}\n\n"
-    log_placeholder.code(log_text, language='log')
+def run_command_with_log(command, log_key):
+    """Runs a command and streams its output to a streamlit session state variable."""
+    st.session_state[log_key] = f"Running command: {command}\n\n"
     process = subprocess.Popen(
         command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, encoding='utf-8', errors='replace'
     )
     for line in iter(process.stdout.readline, ''):
-        log_text += line
-        log_placeholder.code(log_text, language='log')
+        st.session_state[log_key] += line
     process.stdout.close()
     if process.wait() != 0:
-        raise subprocess.CalledProcessError(process.returncode, command, output=log_text)
+        # Append the full log to the exception for better debugging
+        error_output = st.session_state[log_key]
+        raise subprocess.CalledProcessError(process.returncode, command, output=error_output)
 
-def update_daily_data(qlib_dir, start_date, end_date, log_placeholder):
+def update_daily_data(qlib_dir, start_date, end_date, log_key):
     script_path = get_script_path("collector.py")
     command = f'"{sys.executable}" "{script_path}" update_data_to_bin --qlib_data_1d_dir "{qlib_dir}" --trading_date {start_date} --end_date {end_date}'
-    run_command_with_log(command, log_placeholder)
+    run_command_with_log(command, log_key)
 
-def check_data_health(qlib_dir, log_placeholder):
+def check_data_health(qlib_dir, log_key):
     script_path = get_script_path("check_data_health.py")
     command = f'"{sys.executable}" "{script_path}" check_data --qlib_dir "{qlib_dir}"'
-    run_command_with_log(command, log_placeholder)
+    run_command_with_log(command, log_key)
 
 # --- Model Training & Evaluation Functions (FIXED) ---
 def train_model(model_name: str, qlib_dir: str, models_save_dir: str, custom_config: dict = None, custom_model_name: str = None, stock_pool: str = 'csi300', finetune_model_path: str = None):
