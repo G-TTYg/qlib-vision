@@ -5,7 +5,7 @@ from pathlib import Path
 from qlib_utils import (
     SUPPORTED_MODELS, train_model, predict, backtest_strategy,
     update_daily_data, check_data_health, get_historical_prediction,
-    evaluate_model
+    evaluate_model, load_settings, save_settings
 )
 import pandas as pd
 import plotly.express as px
@@ -27,9 +27,9 @@ def data_management_page():
     if "data_log" not in st.session_state:
         st.session_state.data_log = ""
 
-    default_path = str(Path.home() / ".qlib" / "qlib_data")
-    qlib_dir = st.text_input("Qlib 数据存储根路径", default_path, key="data_dir_dm")
+    qlib_dir = st.session_state.settings.get("qlib_data_path", str(Path.home() / ".qlib" / "qlib_data"))
     qlib_1d_dir = str(Path(qlib_dir) / "cn_data")
+    st.info(f"当前Qlib数据路径: `{qlib_dir}` (可在左侧边栏修改)")
 
     with st.expander("1. 全量数据部署 (首次使用)", expanded=True):
         st.info("由于直接从雅虎财经大量下载数据不稳定，推荐通过以下步骤手动下载社区提供的数据包来完成首次数据部署。")
@@ -92,17 +92,19 @@ def model_training_page():
 
     if "training_status" not in st.session_state:
         st.session_state.training_status = None
+    if "training_log" not in st.session_state:
+        st.session_state.training_log = ""
 
-    default_data_path = str(Path.home() / ".qlib" / "qlib_data" / "cn_data")
-    default_models_path = str(Path.home() / "qlib_models")
-    qlib_dir = st.text_input("Qlib 数据存储路径", default_data_path, key="data_dir_train")
-    models_save_dir = st.text_input("训练后模型的保存路径", default_models_path)
+    qlib_dir = st.session_state.settings.get("qlib_data_path", str(Path.home() / ".qlib" / "qlib_data" / "cn_data"))
+    models_save_dir = st.session_state.settings.get("models_path", str(Path.home() / "qlib_models"))
+    st.info(f"当前Qlib数据路径: `{qlib_dir}`")
+    st.info(f"当前模型存读路径: `{models_save_dir}` (可在左侧边栏修改)")
+
     st.subheader("1. 训练模式与模型配置")
     train_mode = st.radio("选择训练模式", ["从零开始新训练", "在旧模型上继续训练 (Finetune)"], key="train_mode", horizontal=True, on_change=lambda: setattr(st.session_state, 'training_status', None))
     finetune_model_path = None
     if train_mode == "在旧模型上继续训练 (Finetune)":
-        finetune_model_dir = st.text_input("要加载的旧模型所在目录", default_models_path, key="finetune_dir")
-        finetune_dir_path = Path(finetune_model_dir).expanduser()
+        finetune_dir_path = Path(models_save_dir).expanduser()
         available_finetune_models = [f.name for f in finetune_dir_path.glob("*.pkl")] if finetune_dir_path.exists() else []
         if available_finetune_models:
             selected_finetune_model = st.selectbox("选择一个要继续训练的模型", available_finetune_models)
@@ -116,7 +118,21 @@ def model_training_page():
     custom_model_name = st.text_input("为新模型命名 (可选, 留空则使用默认名)")
     if "ALSTM" in model_name_key:
         st.warning("️️️**注意：** ALSTM是深度学习模型，训练时间非常长，对电脑性能要求很高。")
-    st.subheader("2. 超参数调节")
+
+    st.subheader("2. 数据段与时间范围")
+    with st.expander("设置训练、验证和测试集的时间", expanded=False):
+        c1, c2 = st.columns(2)
+        train_start = c1.date_input("训练开始", datetime.date(2017, 1, 1))
+        train_end = c2.date_input("训练结束", datetime.date(2020, 12, 31))
+        c1, c2 = st.columns(2)
+        valid_start = c1.date_input("验证开始", datetime.date(2021, 1, 1))
+        valid_end = c2.date_input("验证结束", datetime.date(2021, 12, 31))
+        c1, c2 = st.columns(2)
+        test_start = c1.date_input("测试开始", datetime.date(2022, 1, 1))
+        test_end = c2.date_input("测试结束", datetime.date.today() - datetime.timedelta(days=1))
+
+
+    st.subheader("3. 超参数调节")
     config = copy.deepcopy(SUPPORTED_MODELS[model_name_key])
     params = config['task']['model']['kwargs']
     with st.expander("调节模型参数", expanded=True):
@@ -131,14 +147,63 @@ def model_training_page():
         elif "ALSTM" in model_name_key:
             st.info("ALSTM模型的超参数调节暂未在此界面支持。")
 
+    st.subheader("4. 开始训练")
+    st.warning("""
+    **内存使用提示**:
+    如果在训练过程中遇到 `Unable to allocate...for an array...` 类似的内存不足错误，这通常意味着您选择的**时间范围过长**或**股票池过大**，导致数据量超出了您电脑内存的承载上限。
+    **建议的解决方案**:
+    - **缩短时间范围**: 尝试将训练集、验证集和测试集的总时间跨度减小。
+    - **减小股票池**: 如果您正在使用自定义的非常大的股票池，请考虑减小其规模。
+    - **检查系统**: 确保您使用的是64位版本的Python，并有足够的可用物理内存。
+    """)
     if st.button("开始训练", key="btn_train"):
         st.session_state.training_status = None # Reset status on new run
+        st.session_state.training_log = "" # Clear previous logs
         with st.spinner("正在训练模型，此过程可能需要较长时间，请耐心等待..."):
             try:
-                saved_path = train_model(model_name_key, qlib_dir, models_save_dir, config, custom_model_name if custom_model_name else None, stock_pool, finetune_model_path)
+                # --- Config modification for time ranges ---
+                all_dates = [train_start, train_end, valid_start, valid_end, test_start, test_end]
+                if any(d is None for d in all_dates):
+                    raise ValueError("所有日期都必须设置。")
+                if not (train_start < train_end < valid_start < valid_end < test_start < test_end):
+                    st.error("日期区间设置错误：必须遵循 训练 < 验证 < 测试 的顺序，且开始日期不能晚于结束日期。")
+                    raise ValueError("日期顺序不正确。")
+
+                config_with_dates = copy.deepcopy(config)
+
+                # Format dates to string
+                train_start_str, train_end_str = train_start.strftime("%Y-%m-%d"), train_end.strftime("%Y-%m-%d")
+                valid_start_str, valid_end_str = valid_start.strftime("%Y-%m-%d"), valid_end.strftime("%Y-%m-%d")
+                test_start_str, test_end_str = test_start.strftime("%Y-%m-%d"), test_end.strftime("%Y-%m-%d")
+
+                # Update handler
+                handler_kwargs = config_with_dates['task']['dataset']['kwargs']['handler']['kwargs']
+                handler_kwargs['start_time'] = train_start_str
+                handler_kwargs['end_time'] = test_end_str
+                handler_kwargs['fit_start_time'] = train_start_str
+                handler_kwargs['fit_end_time'] = train_end_str
+
+                # Update dataset segments
+                dataset_segments = config_with_dates['task']['dataset']['kwargs']['segments']
+                dataset_segments['train'] = (train_start_str, train_end_str)
+                dataset_segments['valid'] = (valid_start_str, valid_end_str)
+                dataset_segments['test'] = (test_start_str, test_end_str)
+
+                saved_path, training_log = train_model(
+                    model_name_key,
+                    qlib_dir,
+                    models_save_dir,
+                    config_with_dates, # Pass the modified config
+                    custom_model_name if custom_model_name else None,
+                    stock_pool,
+                    finetune_model_path
+                )
                 st.session_state.training_status = {"status": "success", "message": f"模型训练成功！已保存至: {saved_path}"}
+                st.session_state.training_log = training_log
             except Exception as e:
                 st.session_state.training_status = {"status": "error", "message": f"训练过程中发生错误: {e}"}
+                st.session_state.training_log = st.session_state.get('training_log', '') + f"\n\nERROR: {e}"
+
 
     if st.session_state.training_status:
         status = st.session_state.training_status
@@ -147,6 +212,10 @@ def model_training_page():
             st.balloons()
         elif status["status"] == "error":
             st.error(status["message"])
+
+    if st.session_state.training_log:
+        st.subheader("训练日志")
+        st.code(st.session_state.training_log, language='log')
 
 def prediction_page():
     st.header("投资组合预测")
@@ -162,10 +231,10 @@ def prediction_page():
     if "hist_results" not in st.session_state:
         st.session_state.hist_results = None
 
-    default_data_path = str(Path.home() / ".qlib" / "qlib_data" / "cn_data")
-    default_models_path = str(Path.home() / "qlib_models")
-    models_dir = st.text_input("模型所在目录", default_models_path, key="models_dir_pred")
-    qlib_dir = st.text_input("Qlib 数据存储路径", default_data_path, key="data_dir_pred")
+    qlib_dir = st.session_state.settings.get("qlib_data_path", str(Path.home() / ".qlib" / "qlib_data" / "cn_data"))
+    models_dir = st.session_state.settings.get("models_path", str(Path.home() / "qlib_models"))
+    st.info(f"当前Qlib数据路径: `{qlib_dir}`")
+    st.info(f"当前模型加载路径: `{models_dir}` (可在左侧边栏修改)")
     models_dir_path = Path(models_dir).expanduser()
     available_models = [f.name for f in models_dir_path.glob("*.pkl")] if models_dir_path.exists() else []
     if not available_models:
@@ -248,10 +317,10 @@ def backtesting_page():
     if "backtest_results" not in st.session_state:
         st.session_state.backtest_results = None
 
-    default_data_path = str(Path.home() / ".qlib" / "qlib_data" / "cn_data")
-    default_models_path = str(Path.home() / "qlib_models")
-    models_dir = st.text_input("模型所在目录", default_models_path, key="models_dir_bt")
-    qlib_dir = st.text_input("Qlib 数据存储路径", default_data_path, key="data_dir_bt")
+    qlib_dir = st.session_state.settings.get("qlib_data_path", str(Path.home() / ".qlib" / "qlib_data" / "cn_data"))
+    models_dir = st.session_state.settings.get("models_path", str(Path.home() / "qlib_models"))
+    st.info(f"当前Qlib数据路径: `{qlib_dir}`")
+    st.info(f"当前模型加载路径: `{models_dir}` (可在左侧边栏修改)")
     models_dir_path = Path(models_dir).expanduser()
     available_models = [f.name for f in models_dir_path.glob("*.pkl")] if models_dir_path.exists() else []
     if not available_models:
@@ -312,10 +381,10 @@ def model_evaluation_page():
     if "eval_results" not in st.session_state:
         st.session_state.eval_results = None
 
-    default_data_path = str(Path.home() / ".qlib" / "qlib_data" / "cn_data")
-    default_models_path = str(Path.home() / "qlib_models")
-    models_dir = st.text_input("模型所在目录", default_models_path, key="models_dir_eval")
-    qlib_dir = st.text_input("Qlib 数据存储路径", default_data_path, key="data_dir_eval")
+    qlib_dir = st.session_state.settings.get("qlib_data_path", str(Path.home() / ".qlib" / "qlib_data" / "cn_data"))
+    models_dir = st.session_state.settings.get("models_path", str(Path.home() / "qlib_models"))
+    st.info(f"当前Qlib数据路径: `{qlib_dir}`")
+    st.info(f"当前模型加载路径: `{models_dir}` (可在左侧边栏修改)")
     models_dir_path = Path(models_dir).expanduser()
     available_models = [f.name for f in models_dir_path.glob("*.pkl")] if models_dir_path.exists() else []
     if not available_models:
@@ -361,10 +430,42 @@ def model_evaluation_page():
 
 def main():
     st.set_page_config(layout="wide", page_title="Qlib 可视化工具")
+
+    # --- Settings Initialization ---
+    if 'settings' not in st.session_state:
+        st.session_state.settings = load_settings()
+
     st.sidebar.image("https://avatars.githubusercontent.com/u/65423353?s=200&v=4", width=100)
     st.sidebar.title("Qlib 可视化面板")
+
+    # --- Page Selection ---
     page_options = ["数据管理", "模型训练", "投资组合预测", "模型评估", "策略回测"]
-    page = st.sidebar.radio("选择功能页面", page_options) # horizontal=True
+    page = st.sidebar.radio("选择功能页面", page_options)
+
+    # --- Settings Persistence ---
+    st.sidebar.title("路径设置")
+    st.sidebar.info("在这里修改的路径会在所有页面生效。点击下方按钮以保存。")
+
+    # We use a trick here: the text_input's key is the same as the settings key.
+    # The on_change callback updates the session_state.settings dict.
+    # This makes the code cleaner as we don't need to handle each input individually.
+    def update_setting(key):
+        st.session_state.settings[key] = st.session_state[key]
+
+    # Get default paths
+    default_qlib_data_path = st.session_state.settings.get("qlib_data_path", str(Path.home() / ".qlib" / "qlib_data"))
+    default_models_path = st.session_state.settings.get("models_path", str(Path.home() / "qlib_models"))
+
+    st.sidebar.text_input("Qlib 数据存储根路径", value=default_qlib_data_path, key="qlib_data_path", on_change=update_setting, args=("qlib_data_path",))
+    st.sidebar.text_input("模型保存/加载根路径", value=default_models_path, key="models_path", on_change=update_setting, args=("models_path",))
+
+    if st.sidebar.button("保存当前路径设置"):
+        save_settings(st.session_state.settings)
+        st.sidebar.success("路径已保存!")
+
+    st.sidebar.markdown("---") # Separator
+
+    # --- Page Display ---
     if page == "数据管理": data_management_page()
     elif page == "模型训练": model_training_page()
     elif page == "投资组合预测": prediction_page()

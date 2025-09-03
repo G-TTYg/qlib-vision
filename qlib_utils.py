@@ -14,6 +14,9 @@ import pickle
 import sys
 import subprocess
 import copy
+import io
+import json
+from contextlib import redirect_stdout, redirect_stderr
 
 # --- Factor and Model Configurations ---
 HANDLER_ALPHA158 = { "class": "Alpha158", "module_path": "qlib.contrib.data.handler", "kwargs": { "start_time": "2014-01-01", "end_time": "2022-12-31", "fit_start_time": "2014-01-01", "fit_end_time": "2019-12-31", "instruments": "csi300" } }
@@ -84,9 +87,22 @@ def train_model(model_name: str, qlib_dir: str, models_save_dir: str, custom_con
         model_kwargs['init_model'] = initial_model
 
     model = init_instance_by_config(model_config["task"]["model"])
-    model.fit(dataset)
 
-    model_basename = custom_model_name if custom_model_name else model_name.replace(' ', '_').replace('(', '').replace(')', '')
+    log_stream = io.StringIO()
+    with redirect_stdout(log_stream), redirect_stderr(log_stream):
+        model.fit(dataset)
+    training_log = log_stream.getvalue()
+
+    if custom_model_name:
+        model_basename = custom_model_name
+    else:
+        base_name = model_name.replace(' ', '_').replace('(', '').replace(')', '')
+        try:
+            train_end_date = model_config['task']['dataset']['kwargs']['segments']['train'][1]
+            model_basename = f"{base_name}_{train_end_date}"
+        except (KeyError, IndexError):
+            model_basename = base_name # Fallback in case the date is not available
+
     model_save_path = Path(models_save_dir).expanduser() / f"{model_basename}.pkl"
     config_save_path = Path(models_save_dir).expanduser() / f"{model_basename}.yaml"
     model_save_path.parent.mkdir(parents=True, exist_ok=True)
@@ -95,7 +111,29 @@ def train_model(model_name: str, qlib_dir: str, models_save_dir: str, custom_con
 
     with open(model_save_path, 'wb') as f: pickle.dump(model, f)
     with open(config_save_path, 'w') as f: yaml.dump(model_config["task"], f)
-    return str(model_save_path)
+    return str(model_save_path), training_log
+
+# --- Settings Persistence ---
+CONFIG_FILE = "config.json"
+
+def save_settings(settings: dict):
+    """Saves settings to a JSON file."""
+    try:
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(settings, f, indent=4)
+    except Exception as e:
+        st.error(f"Error saving settings: {e}")
+
+def load_settings() -> dict:
+    """Loads settings from a JSON file."""
+    if Path(CONFIG_FILE).exists():
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            st.warning(f"Could not load settings: {e}")
+            return {}
+    return {}
 
 def predict(model_path_str: str, qlib_dir: str, prediction_date: str):
     model_path = Path(model_path_str)
