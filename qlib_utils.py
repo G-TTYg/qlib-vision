@@ -109,9 +109,9 @@ def predict(model_path_str: str, qlib_dir: str, prediction_date: str):
         model = pickle.load(f)
     config["dataset"]["kwargs"]["handler"]["kwargs"]["start_time"] = pd.to_datetime(prediction_date) - pd.DateOffset(years=2)
     config["dataset"]["kwargs"]["handler"]["kwargs"]["end_time"] = prediction_date
-    config["dataset"]["kwargs"]["segments"] = {"predict": (prediction_date, prediction_date)}
+    config["dataset"]["kwargs"]["segments"]["test"] = (prediction_date, prediction_date)
     dataset = init_instance_by_config(config["dataset"])
-    prediction = model.predict(dataset)
+    prediction = model.predict(dataset, segment="test")
     prediction = prediction.reset_index().rename(columns={'instrument': 'StockID', 'datetime': 'Date'})
     return prediction.sort_values(by="score", ascending=False)
 
@@ -130,6 +130,7 @@ def backtest_strategy(model_path_str: str, qlib_dir: str, start_time: str, end_t
         model = pickle.load(f)
     config["dataset"]["kwargs"]["handler"]["kwargs"]["start_time"] = start_time
     config["dataset"]["kwargs"]["handler"]["kwargs"]["end_time"] = end_time
+    config["dataset"]["kwargs"]["segments"]["test"] = (start_time, end_time)
     dataset = init_instance_by_config(config["dataset"])
     strategy = TopkDropoutStrategy(model=model, dataset=dataset, **strategy_kwargs)
     report_df, _ = backtest_daily(start_time=start_time, end_time=end_time, strategy=strategy, exchange_kwargs=exchange_kwargs)
