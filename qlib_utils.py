@@ -113,6 +113,7 @@ def predict(model_path_str: str, qlib_dir: str, prediction_date: str):
     config["dataset"]["kwargs"]["segments"]["test"] = (prediction_date, prediction_date)
     dataset = init_instance_by_config(config["dataset"])
     prediction = model.predict(dataset, segment="test")
+    prediction.name = 'score'
     prediction = prediction.reset_index().rename(columns={'instrument': 'StockID', 'datetime': 'Date'})
     return prediction.sort_values(by="score", ascending=False)
 
