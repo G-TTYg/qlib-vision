@@ -184,6 +184,15 @@ def evaluate_model(model_path_str: str, qlib_dir: str):
     # The test period is defined in the model's config file
     test_period = config["dataset"]["kwargs"]["segments"]["test"]
 
+    # Dynamically set benchmark
+    instruments = config["dataset"]["kwargs"]["handler"]["kwargs"]["instruments"]
+    if instruments == "csi300":
+        benchmark = "SH000300"
+    elif instruments == "csi500":
+        benchmark = "SH000905"
+    else:
+        benchmark = "SH000300" # Default fallback
+
     port_analysis_config = {
         "executor": {
             "class": "SimulatorExecutor",
@@ -199,7 +208,7 @@ def evaluate_model(model_path_str: str, qlib_dir: str):
             "start_time": test_period[0],
             "end_time": test_period[1],
             "account": 100000000,
-            "benchmark": "SH000300",
+            "benchmark": benchmark,
             "exchange_kwargs": { "freq": "day", "limit_threshold": 0.095, "deal_price": "close", "open_cost": 0.0005, "close_cost": 0.0015, "min_cost": 5, },
         },
     }
