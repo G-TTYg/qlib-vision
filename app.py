@@ -349,13 +349,16 @@ def prediction_page():
     selected_models = st.multiselect("选择一个或多个模型进行对比预测", available_models)
 
     if selected_models:
-        model_info_str = ""
-        for model_name in selected_models:
-            model_path = str(models_dir_path / model_name)
-            info = get_model_info(model_path)
-            stock_pool = info.get('stock_pool', '未知')
-            model_info_str += f"- **{model_name}**: 预测股票池 `{stock_pool}`"
-        st.info(model_info_str)
+        with st.container(border=True):
+            st.markdown("**已选模型信息:**")
+            for model_name in selected_models:
+                model_path = str(models_dir_path / model_name)
+                info = get_model_info(model_path)
+                stock_pool = info.get('stock_pool', '未知')
+                if info.get("error"):
+                    st.warning(f"- **{model_name}**: 无法加载信息 ({info['error']})")
+                else:
+                    st.markdown(f"- **{model_name}**: 预测股票池 `{stock_pool}`")
 
     prediction_date = st.date_input("选择预测日期", datetime.date.today() - datetime.timedelta(days=1))
 
