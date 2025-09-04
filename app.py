@@ -172,7 +172,7 @@ def model_training_page():
     factor_name = col2.selectbox("选择因子", list(FACTORS.keys()))
 
     # Dynamically create stock pool selection
-    summary = get_data_summary(qlib_1d_dir)
+    summary = get_data_summary(qlib_dir)
     instrument_list = summary.get("instruments")
     if instrument_list:
         stock_pool = st.selectbox("选择股票池", options=instrument_list, help="这是从您的数据目录中自动扫描到的股票池列表。")
@@ -198,11 +198,17 @@ def model_training_page():
 
 
     st.subheader("3. 超参数调节")
+    use_gpu = st.checkbox("尝试使用GPU加速 (如果可用)", value=False, help="如果您的LightGBM/XGBoost已正确配置GPU支持，勾选此项可以大幅提速。")
+
     params = copy.deepcopy(MODELS[model_name]["kwargs"])
+    if use_gpu:
+        params['device'] = 'gpu'
+
     with st.expander("调节模型参数", expanded=True):
         if any(m in model_name for m in ["LightGBM", "XGBoost", "CatBoost"]):
             # Add n_jobs here for parallel processing
-            params['n_jobs'] = st.number_input("并行计算线程数 (n_jobs)", -1, 16, -1, help="设置用于并行计算的线程数。-1 表示使用所有可用的CPU核心。")
+            if not use_gpu: # n_jobs is for CPU parallelism
+                params['n_jobs'] = st.number_input("并行计算线程数 (n_jobs)", -1, 16, -1, help="设置用于并行计算的线程数。-1 表示使用所有可用的CPU核心。")
 
             if "CatBoost" in model_name:
                 params['iterations'] = st.slider("迭代次数", 50, 500, params.get('iterations', 200), 10, key=f"it_{model_name}")
@@ -456,9 +462,15 @@ def backtesting_page():
             exchange_kwargs = {"open_cost": open_cost, "close_cost": close_cost, "min_cost": min_cost, "deal_price": "close"}
             with st.spinner("正在回测..."):
                 try:
-                    report_df = backtest_strategy(selected_model_path, qlib_dir, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), strategy_kwargs, exchange_kwargs)
-                    fig = px.line(report_df, x=report_df.index, y=report_df.columns, title="策略 vs. 基准")
-                    st.session_state.backtest_results = {"report": report_df, "fig": fig}
+                    # backtest_strategy now returns two dataframes: one for daily values, one for analysis
+                    daily_report_df, analysis_df = backtest_strategy(
+                        selected_model_path, qlib_dir,
+                        start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"),
+                        strategy_kwargs, exchange_kwargs
+                    )
+                    # The plot should only use the daily report
+                    fig = px.line(daily_report_df, x=daily_report_df.index, y=['account', 'bench'], title="策略 vs. 基准")
+                    st.session_state.backtest_results = {"daily": daily_report_df, "analysis": analysis_df, "fig": fig}
                 except Exception as e:
                     st.error(f"回测过程中发生错误: {e}")
                     st.session_state.backtest_results = None
@@ -466,15 +478,20 @@ def backtesting_page():
     if st.session_state.backtest_results:
         st.success("回测完成！")
         st.subheader("绩效指标")
-        report_df = st.session_state.backtest_results["report"]
-        metrics = report_df.loc["excess_return_with_cost"]
+        # Metrics are now in the 'analysis' dataframe
+        analysis_df = st.session_state.backtest_results["analysis"]
+        metrics = analysis_df.loc["excess_return_with_cost"]
         kpi_cols = st.columns(4)
         kpi_cols[0].metric("年化收益率", f"{metrics['annualized_return']:.2%}")
-        kpi_cols[1].metric("夏普比率", f"{metrics['information_ratio']:.2f}")
+        kpi_cols[1].metric("信息比率", f"{metrics['information_ratio']:.2f}")
         kpi_cols[2].metric("最大回撤", f"{metrics['max_drawdown']:.2%}")
         kpi_cols[3].metric("换手率", f"{metrics['turnover_rate']:.2f}")
+
         st.subheader("资金曲线")
         st.plotly_chart(st.session_state.backtest_results["fig"], use_container_width=True)
+
+        with st.expander("查看详细分析报告"):
+            st.dataframe(analysis_df)
 
 def model_evaluation_page():
     st.header("模型评估")

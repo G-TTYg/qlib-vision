@@ -273,7 +273,7 @@ def backtest_strategy(model_path_str: str, qlib_dir: str, start_time: str, end_t
     import qlib
     from qlib.utils import init_instance_by_config
     from qlib.contrib.strategy import TopkDropoutStrategy
-    from qlib.contrib.evaluate import backtest_daily
+    from qlib.contrib.evaluate import backtest_daily, risk_analysis
     qlib.auto_init(provider_uri=qlib_dir)
 
     model_path = Path(model_path_str)
@@ -289,8 +289,20 @@ def backtest_strategy(model_path_str: str, qlib_dir: str, start_time: str, end_t
     config["dataset"]["kwargs"]["segments"]["test"] = (start_time, end_time)
     dataset = init_instance_by_config(config["dataset"])
     strategy = TopkDropoutStrategy(model=model, dataset=dataset, **strategy_kwargs)
+
+    # The backtest_daily function now primarily returns the daily portfolio results
     report_df, _ = backtest_daily(start_time=start_time, end_time=end_time, strategy=strategy, exchange_kwargs=exchange_kwargs)
-    return report_df
+
+    # We need to manually calculate the analysis metrics using risk_analysis
+    analysis = dict()
+    analysis["excess_return_without_cost"] = risk_analysis(report_df["return"] - report_df["bench"])
+    analysis["excess_return_with_cost"] = risk_analysis(report_df["return"] - report_df["bench"] - report_df["cost"])
+    analysis["return"] = risk_analysis(report_df["return"])
+
+    analysis_df = pd.concat(analysis)  # This will be a DataFrame with metrics
+
+    # Return both the daily report for plotting and the analysis report for metrics
+    return report_df, analysis_df
 
 def get_historical_prediction(model_path_str: str, qlib_dir: str, stock_id: str, start_date: str, end_date: str):
     # This can be slow as it predicts day by day
