@@ -134,7 +134,7 @@ class DataHealthChecker:
                 large_step_threshold_volume=self.large_step_threshold_volume,
                 missing_data_num=self.missing_data_num,
             )
-            for inst in tqdm(instrument_list, desc="Dispatching instrument checks")
+            for inst in instrument_list
         )
 
         self.summarize_results(results)
