@@ -142,6 +142,9 @@ def model_training_page():
     params = copy.deepcopy(MODELS[model_name]["kwargs"])
     with st.expander("调节模型参数", expanded=True):
         if any(m in model_name for m in ["LightGBM", "XGBoost", "CatBoost"]):
+            # Add n_jobs here for parallel processing
+            params['n_jobs'] = st.number_input("并行计算线程数 (n_jobs)", -1, 16, -1, help="设置用于并行计算的线程数。-1 表示使用所有可用的CPU核心。")
+
             if "CatBoost" in model_name:
                 params['iterations'] = st.slider("迭代次数", 50, 500, params.get('iterations', 200), 10, key=f"it_{model_name}")
                 params['depth'] = st.slider("最大深度", 3, 15, params.get('depth', 7), key=f"depth_{model_name}")
@@ -167,9 +170,12 @@ def model_training_page():
     """)
 
     log_placeholder = st.empty()
+    if st.session_state.training_log:
+        log_placeholder.code(st.session_state.training_log, language='log')
 
     if st.button("开始训练", key="btn_train"):
         st.session_state.training_status = None # Reset status on new run
+        st.session_state.training_log = "" # Clear log from session state
         log_placeholder.empty() # Clear previous logs from the placeholder
 
         with st.spinner("正在训练模型，此过程可能需要较长时间，请耐心等待..."):
@@ -382,8 +388,11 @@ def model_evaluation_page():
     - **组合分析 (Portfolio Analysis)**: 基于模型信号，运行一个标准的Top-K策略，并分析该策略的绩效。这反映了模型在模拟实战中的表现，包含年化收益、夏普比率、最大回撤等指标。
     """)
 
+    # Initialize session state
     if "eval_results" not in st.session_state:
         st.session_state.eval_results = None
+    if "evaluation_log" not in st.session_state:
+        st.session_state.evaluation_log = ""
 
     qlib_dir = st.session_state.settings.get("qlib_data_path", str(Path.home() / ".qlib" / "qlib_data" / "cn_data"))
     models_dir = st.session_state.settings.get("models_path", str(Path.home() / "qlib_models"))
@@ -399,18 +408,22 @@ def model_evaluation_page():
 
     st.subheader("评估日志")
     log_placeholder = st.empty()
+    if st.session_state.evaluation_log:
+        log_placeholder.code(st.session_state.evaluation_log, language='log')
 
     if st.button("开始评估", key="btn_eval"):
         if not selected_model_name:
             st.warning("请选择一个模型。")
             st.session_state.eval_results = None
         else:
-            log_placeholder.empty() # Clear previous logs
+            st.session_state.evaluation_log = "" # Clear previous logs
+            log_placeholder.empty()
             with st.spinner("正在执行评估，这可能需要几分钟时间..."):
                 try:
                     model_path = str(models_dir_path / selected_model_name)
-                    results = evaluate_model(model_path, qlib_dir, log_placeholder=log_placeholder)
+                    results, eval_log = evaluate_model(model_path, qlib_dir, log_placeholder=log_placeholder)
                     st.session_state.eval_results = results
+                    st.session_state.evaluation_log = eval_log
                 except Exception as e:
                     st.error(f"评估过程中发生错误: {e}")
                     # The log placeholder already contains the error details

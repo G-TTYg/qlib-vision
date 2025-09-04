@@ -336,15 +336,20 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
         recorder = R.get_recorder()
 
         # 1. Signal Analysis
+        print("\n--- 开始信号分析 (Signal Analysis) ---")
         sr = SignalRecord(model, dataset_for_eval, recorder)
         sr.generate()
         sar = SigAnaRecord(recorder, ana_long_short=False)
         sar.generate()
         signal_report = recorder.load_object("sig_ana/report_normal.pkl")
+        print("--- 信号分析完成 ---")
 
         # 2. Portfolio Analysis
+        print("\n--- 开始投资组合分析 (Portfolio Analysis) ---")
         par = PortAnaRecord(recorder, port_analysis_config, "day")
         par.generate()
         portfolio_report = recorder.load_object("port_ana/report_normal.pkl")
+        print("--- 投资组合分析完成 ---")
 
-    return {"signal": signal_report, "portfolio": portfolio_report}
+    eval_log = log_stream.buffer if isinstance(log_stream, StreamlitLogHandler) else log_stream.getvalue()
+    return {"signal": signal_report, "portfolio": portfolio_report}, eval_log
