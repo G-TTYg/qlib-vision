@@ -1,16 +1,19 @@
-# Qlib for core functionalities
-pyqlib==0.9.7
+# The core qlib library
+pyqlib
+
+# CONSTRAIN numpy version to be < 2.0
+numpy<2.0.0
+
 # GUI Framework
-streamlit==1.27.0
-# Other dependencies, compatible with Python 3.12
-numpy==1.26.4
-pandas==2.2.0
-scikit-learn==1.4.0
-fire
-torch==2.2.0
-# For qlib data download
+streamlit
+
+# Plotting library used in the app
+plotly
+
+# Dependencies for the data download script
+yahooquery
 requests_cache
-xgboost==2.0.3
-catboost==1.2.5
-# Dependency for Qlib's data collector script
-yahooquery==2.3.7
+
+# Dependencies for optional models supported by the UI
+xgboost
+catboost

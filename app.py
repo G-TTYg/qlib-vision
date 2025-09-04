@@ -5,7 +5,7 @@ from pathlib import Path
 from qlib_utils import (
     SUPPORTED_MODELS, train_model, predict, backtest_strategy,
     update_daily_data, check_data_health, get_historical_prediction,
-    evaluate_model, load_settings, save_settings
+    evaluate_model, load_settings, save_settings, initialize_qlib
 )
 import pandas as pd
 import plotly.express as px
@@ -149,12 +149,16 @@ def model_training_page():
 
     st.subheader("4. 开始训练")
     st.warning("""
-    **内存使用提示**:
-    如果在训练过程中遇到 `Unable to allocate...for an array...` 类似的内存不足错误，这通常意味着您选择的**时间范围过长**或**股票池过大**，导致数据量超出了您电脑内存的承载上限。
-    **建议的解决方案**:
-    - **缩短时间范围**: 尝试将训练集、验证集和测试集的总时间跨度减小。
-    - **减小股票池**: 如果您正在使用自定义的非常大的股票池，请考虑减小其规模。
-    - **检查系统**: 确保您使用的是64位版本的Python，并有足够的可用物理内存。
+    **重要：关于内存使用的说明**
+
+    Qlib在处理数据时，会一次性将所选**时间范围**和**股票池**的全部数据加载到内存中。这是一个设计特性，旨在最大化计算速度。
+
+    因此，如果您遇到 `Unable to allocate...` 或类似的内存不足错误，这是**正常现象**，表明您选择的数据量超过了您计算机的可用RAM。
+
+    **解决方案**:
+    - **缩短时间范围**: 这是最有效的解决方法。请尝试将训练、验证和测试集的总时间跨度减小。
+    - **切换为小盘股**: `csi500`比`csi300`需要更多的内存。
+    - **硬件升级**: 如果需要处理大规模数据，请在具有更大内存（RAM）的机器上运行。
     """)
     if st.button("开始训练", key="btn_train"):
         st.session_state.training_status = None # Reset status on new run
@@ -434,6 +438,24 @@ def main():
     # --- Settings Initialization ---
     if 'settings' not in st.session_state:
         st.session_state.settings = load_settings()
+
+    # --- Qlib Initialization ---
+    if 'qlib_initialized' not in st.session_state:
+        st.session_state.qlib_initialized = False
+
+    try:
+        if not st.session_state.qlib_initialized:
+            # Only initialize if the path is not the default, uninitialized one.
+            qlib_data_path = st.session_state.settings.get("qlib_data_path")
+            if qlib_data_path:
+                initialize_qlib(qlib_data_path)
+                st.session_state.qlib_initialized = True
+                st.sidebar.success("Qlib 已初始化成功！")
+    except FileNotFoundError as e:
+        st.sidebar.error(f"Qlib 初始化失败: {e}")
+    except Exception as e:
+        st.sidebar.error(f"Qlib 初始化时发生未知错误: {e}")
+
 
     st.sidebar.image("https://avatars.githubusercontent.com/u/65423353?s=200&v=4", width=100)
     st.sidebar.title("Qlib 可视化面板")

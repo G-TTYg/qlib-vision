@@ -1,11 +1,3 @@
-import qlib
-from qlib.constant import REG_CN
-from qlib.utils import exists_qlib_data, init_instance_by_config
-from qlib.workflow import R
-from qlib.contrib.evaluate import backtest_daily
-from qlib.contrib.strategy import TopkDropoutStrategy
-from qlib.workflow import R
-from qlib.workflow.record_temp import SignalRecord, PortAnaRecord, SigAnaRecord
 from pathlib import Path
 import yaml
 import streamlit as st
@@ -16,11 +8,12 @@ import subprocess
 import copy
 import io
 import json
+import gc
 from contextlib import redirect_stdout, redirect_stderr
 
 # --- Factor and Model Configurations ---
-HANDLER_ALPHA158 = { "class": "Alpha158", "module_path": "qlib.contrib.data.handler", "kwargs": { "start_time": "2014-01-01", "end_time": "2022-12-31", "fit_start_time": "2014-01-01", "fit_end_time": "2019-12-31", "instruments": "csi300" } }
-HANDLER_ALPHA360 = { "class": "Alpha360", "module_path": "qlib.contrib.data.handler", "kwargs": { "start_time": "2014-01-01", "end_time": "2022-12-31", "fit_start_time": "2014-01-01", "fit_end_time": "2019-12-31", "instruments": "csi300" } }
+HANDLER_ALPHA158 = { "class": "Alpha158", "module_path": "qlib.contrib.data.handler", "kwargs": { "start_time": "2014-01-01", "end_time": "2022-12-31", "fit_start_time": "2014-01-01", "fit_end_time": "2019-12-31", "instruments": "csi300", "drop_raw": True } }
+HANDLER_ALPHA360 = { "class": "Alpha360", "module_path": "qlib.contrib.data.handler", "kwargs": { "start_time": "2014-01-01", "end_time": "2022-12-31", "fit_start_time": "2014-01-01", "fit_end_time": "2019-12-31", "instruments": "csi300", "drop_raw": True } }
 DATASET_ALPHA158 = { "class": "DatasetH", "module_path": "qlib.data.dataset", "kwargs": { "handler": HANDLER_ALPHA158, "segments": { "train": ("2014-01-01", "2019-12-31"), "valid": ("2020-01-01", "2020-12-31"), "test": ("2021-01-01", "2022-12-31") } } }
 DATASET_ALPHA360 = { "class": "DatasetH", "module_path": "qlib.data.dataset", "kwargs": { "handler": HANDLER_ALPHA360, "segments": { "train": ("2014-01-01", "2019-12-31"), "valid": ("2020-01-01", "2020-12-31"), "test": ("2021-01-01", "2022-12-31") } } }
 LIGHTGBM_MODEL = { "class": "LGBModel", "module_path": "qlib.contrib.model.gbdt", "kwargs": { "loss": "mse", "colsample_bytree": 0.8879, "learning_rate": 0.0421, "subsample": 0.8789, "n_estimators": 200, "max_depth": 8 } }
@@ -70,12 +63,26 @@ def check_data_health(qlib_dir, log_key):
     command = f'"{sys.executable}" "{script_path}" check_data --qlib_dir "{qlib_dir}"'
     run_command_with_log(command, log_key)
 
+# --- Qlib Initialization ---
+def initialize_qlib(provider_uri: str):
+    """Initializes Qlib with the given provider URI."""
+    import qlib
+    from qlib.constant import REG_CN
+    from qlib.utils import exists_qlib_data
+
+    provider_uri = str(Path(provider_uri).expanduser())
+    if not exists_qlib_data(provider_uri):
+        raise FileNotFoundError(
+            f"Qlib data not found at '{provider_uri}'. "
+            f"Please check the path in the sidebar and ensure you have run the data download command."
+        )
+    qlib.init(provider_uri=provider_uri, region=REG_CN)
+
+
 # --- Model Training & Evaluation Functions (FIXED) ---
 def train_model(model_name: str, qlib_dir: str, models_save_dir: str, custom_config: dict = None, custom_model_name: str = None, stock_pool: str = 'csi300', finetune_model_path: str = None):
-    provider_uri = str(Path(qlib_dir).expanduser())
-    if not exists_qlib_data(provider_uri):
-        raise FileNotFoundError("Qlib data not found.")
-    qlib.init(provider_uri=provider_uri, region=REG_CN)
+    from qlib.utils import init_instance_by_config
+
     model_config = copy.deepcopy(custom_config if custom_config is not None else SUPPORTED_MODELS[model_name])
     model_config["task"]["dataset"]["kwargs"]["handler"]["kwargs"]["instruments"] = stock_pool
     dataset = init_instance_by_config(model_config["task"]["dataset"])
@@ -111,6 +118,18 @@ def train_model(model_name: str, qlib_dir: str, models_save_dir: str, custom_con
 
     with open(model_save_path, 'wb') as f: pickle.dump(model, f)
     with open(config_save_path, 'w') as f: yaml.dump(model_config["task"], f)
+
+    # --- Memory Cleanup ---
+    # Explicitly delete large objects and run garbage collection
+    try:
+        del model, dataset
+        if 'initial_model' in locals():
+            del initial_model
+        gc.collect()
+        training_log += "\n[INFO] Memory cleanup complete."
+    except Exception as e:
+        training_log += f"\n[WARNING] Error during memory cleanup: {e}"
+
     return str(model_save_path), training_log
 
 # --- Settings Persistence ---
@@ -136,16 +155,14 @@ def load_settings() -> dict:
     return {}
 
 def predict(model_path_str: str, qlib_dir: str, prediction_date: str):
+    from qlib.utils import init_instance_by_config
+
     model_path = Path(model_path_str)
     config_path = model_path.with_suffix(".yaml")
     if not config_path.exists():
         raise FileNotFoundError(f"Config file {config_path} not found for model {model_path.name}")
     with open(config_path, 'r') as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
-    provider_uri = str(Path(qlib_dir).expanduser())
-    if not exists_qlib_data(provider_uri):
-        raise FileNotFoundError("Qlib data not found.")
-    qlib.init(provider_uri=provider_uri, region=REG_CN)
     with open(model_path, 'rb') as f:
         model = pickle.load(f)
     config["dataset"]["kwargs"]["handler"]["kwargs"]["start_time"] = pd.to_datetime(prediction_date) - pd.DateOffset(years=2)
@@ -158,16 +175,16 @@ def predict(model_path_str: str, qlib_dir: str, prediction_date: str):
     return prediction.sort_values(by="score", ascending=False)
 
 def backtest_strategy(model_path_str: str, qlib_dir: str, start_time: str, end_time: str, strategy_kwargs: dict, exchange_kwargs: dict):
+    from qlib.utils import init_instance_by_config
+    from qlib.contrib.strategy import TopkDropoutStrategy
+    from qlib.contrib.evaluate import backtest_daily
+
     model_path = Path(model_path_str)
     config_path = model_path.with_suffix(".yaml")
     if not config_path.exists():
         raise FileNotFoundError(f"Config file {config_path} not found for model {model_path.name}")
     with open(config_path, 'r') as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
-    provider_uri = str(Path(qlib_dir).expanduser())
-    if not exists_qlib_data(provider_uri):
-        raise FileNotFoundError("Qlib data not found.")
-    qlib.init(provider_uri=provider_uri, region=REG_CN)
     with open(model_path, 'rb') as f:
         model = pickle.load(f)
     config["dataset"]["kwargs"]["handler"]["kwargs"]["start_time"] = start_time
@@ -202,17 +219,16 @@ def evaluate_model(model_path_str: str, qlib_dir: str):
     Evaluate a trained model using qlib's standard analysis recorders.
     Returns a dictionary containing signal analysis and portfolio analysis results.
     """
+    from qlib.utils import init_instance_by_config
+    from qlib.workflow import R
+    from qlib.workflow.record_temp import SignalRecord, PortAnaRecord, SigAnaRecord
+
     model_path = Path(model_path_str)
     config_path = model_path.with_suffix(".yaml")
     if not config_path.exists():
         raise FileNotFoundError(f"Config file {config_path} not found for model {model_path.name}")
     with open(config_path, 'r') as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
-
-    provider_uri = str(Path(qlib_dir).expanduser())
-    if not exists_qlib_data(provider_uri):
-        raise FileNotFoundError("Qlib data not found.")
-    qlib.init(provider_uri=provider_uri, region=REG_CN)
 
     with open(model_path, 'rb') as f:
         model = pickle.load(f)
