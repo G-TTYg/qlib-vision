@@ -7,7 +7,7 @@ from qlib.constant import REG_CN
 from pathlib import Path
 from qlib_utils import (
     MODELS, FACTORS, train_model, predict, backtest_strategy,
-    update_daily_data, check_data_health, get_historical_prediction,
+    update_daily_data, check_data_health, get_data_summary, get_historical_prediction,
     evaluate_model, load_settings, save_settings
 )
 import pandas as pd
@@ -51,7 +51,21 @@ def data_management_page():
     qlib_1d_dir = str(Path(qlib_dir) / "cn_data")
     st.info(f"当前Qlib数据路径: `{qlib_dir}` (可在左侧边栏修改)")
 
-    with st.expander("1. 全量数据部署 (首次使用)", expanded=True):
+    st.subheader("本地数据概览")
+    summary = get_data_summary(qlib_1d_dir)
+    if summary["error"]:
+        st.warning(f"无法加载数据概览: {summary['error']}")
+    else:
+        col1, col2 = st.columns(2)
+        col1.metric("数据覆盖范围", summary["date_range"])
+        col2.metric("股票池数量", len(summary["instruments"]))
+        with st.expander("查看详细信息"):
+            st.json({
+                "已发现的股票池文件": summary["instruments"],
+                "已发现的数据字段": summary["fields"]
+            })
+
+    with st.expander("1. 全量数据部署 (首次使用)", expanded=False):
         st.info("由于直接从雅虎财经大量下载数据不稳定，推荐通过以下步骤手动下载社区提供的数据包来完成首次数据部署。")
         st.markdown("""
         **请在您的终端中依次执行以下命令：**
@@ -157,7 +171,15 @@ def model_training_page():
     model_name = col1.selectbox("选择模型", list(MODELS.keys()))
     factor_name = col2.selectbox("选择因子", list(FACTORS.keys()))
 
-    stock_pool = st.text_input("输入股票池名称 (例如 csi300)", "csi300", help="请输入Qlib数据中存在的股票池名称。例如: csi300, csi500。")
+    # Dynamically create stock pool selection
+    summary = get_data_summary(qlib_1d_dir)
+    instrument_list = summary.get("instruments")
+    if instrument_list:
+        stock_pool = st.selectbox("选择股票池", options=instrument_list, help="这是从您的数据目录中自动扫描到的股票池列表。")
+    else:
+        st.warning("未在您的数据目录中扫描到股票池文件。请手动输入股票池名称。")
+        stock_pool = st.text_input("输入股票池名称 (例如 csi300)", "csi300")
+
     custom_model_name = st.text_input("为新模型命名 (可选, 留空则使用默认名)")
     if "ALSTM" in model_name:
         st.warning("️️️**注意：** ALSTM是深度学习模型，训练时间非常长，对电脑性能要求很高。")

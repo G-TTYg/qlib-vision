@@ -102,6 +102,52 @@ def check_data_health(qlib_dir, log_key):
     command = f'"{sys.executable}" "{script_path}" check_data --qlib_dir "{qlib_dir}"'
     run_command_with_log(command, log_key)
 
+def get_data_summary(qlib_dir_str: str):
+    """Scans the Qlib data directory and returns a summary of its contents."""
+    summary = {
+        "date_range": "N/A",
+        "instruments": [],
+        "fields": [],
+        "error": None
+    }
+    try:
+        qlib_dir = Path(qlib_dir_str)
+        if not qlib_dir.exists():
+            summary["error"] = "指定的Qlib数据路径不存在。"
+            return summary
+
+        # Initialize Qlib to use its data API
+        import qlib
+        qlib.init(provider_uri=qlib_dir_str, expression_cache=None)
+        from qlib.data import D
+
+        # Get date range from calendar
+        calendar = D.calendar()
+        if calendar is not None and len(calendar) > 0:
+            start_date = pd.to_datetime(calendar[0]).strftime('%Y-%m-%d')
+            end_date = pd.to_datetime(calendar[-1]).strftime('%Y-%m-%d')
+            summary["date_range"] = f"{start_date} to {end_date}"
+
+        # Get instrument list
+        instruments_dir = qlib_dir / "instruments"
+        if instruments_dir.exists():
+            summary["instruments"] = [f.stem for f in instruments_dir.glob("*.txt")]
+
+        # Get fields list from a sample stock
+        features_dir = qlib_dir / "features"
+        if features_dir.exists():
+            # Find the first stock directory that is not a special file
+            sample_stock_dir = next((d for d in features_dir.iterdir() if d.is_dir()), None)
+            if sample_stock_dir:
+                summary["fields"] = [f.stem for f in sample_stock_dir.glob("*.bin")]
+
+        if not summary["date_range"] and not summary["instruments"] and not summary["fields"]:
+             summary["error"] = "指定的路径不是一个有效的Qlib数据目录，或者目录为空。"
+
+    except Exception as e:
+        summary["error"] = f"扫描数据时发生错误: {e}"
+
+    return summary
 
 # --- Model Training & Evaluation Functions (FIXED) ---
 def train_model(
