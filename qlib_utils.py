@@ -487,11 +487,30 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
             print("投资组合分析图表... Done")
 
             # 3.2 Score IC Graph
+            # BUG FIX: Handle cases where IC cannot be computed, which would crash the plotting function.
+            # This can happen if predictions or labels are constant on a given day, resulting in NaN correlation.
             pred_label = dataset_for_eval.prepare("test", col_set=["feature", "label"])
             pred_label["score"] = prediction_df
             pred_label = pred_label.dropna()
-            ic_figure = score_ic_graph(pred_label, show_notebook=False)[0]
-            print("IC分析图表... Done")
+
+            # Calculate IC series manually to check for validity before plotting
+            ic_series = pred_label.groupby("datetime").apply(lambda df: df["score"].corr(df["label"]))
+
+            if ic_series.dropna().empty:
+                # If all IC values are NaN, plotting will fail.
+                # Create a blank figure with a message instead.
+                import plotly.graph_objects as go
+                ic_figure = go.Figure()
+                ic_figure.update_layout(
+                    title_text="IC Analysis (No valid data to plot)",
+                    xaxis_showticklabels=False, yaxis_showticklabels=False
+                )
+                print("IC分析图表... Skipped (No valid data)")
+            else:
+                # If there is valid data, proceed with normal plotting.
+                ic_figure = score_ic_graph(pred_label, show_notebook=False)[0]
+                print("IC分析图表... Done")
+
             print("--- 可视化图表生成完毕 ---")
 
 
