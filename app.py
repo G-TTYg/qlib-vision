@@ -85,7 +85,7 @@ def data_management_page():
     st.markdown("如果已有全量数据，可在此处更新到指定日期，或检查本地数据的完整性和质量。所有执行日志都会显示在下方。")
 
     log_placeholder = st.empty()
-    log_placeholder.code(st.session_state.data_log, language='log')
+    log_placeholder.code("日志输出将显示在此处" , language='log')
 
     col1, col2 = st.columns(2)
     start_date = col1.date_input("更新开始日期", datetime.date.today() - datetime.timedelta(days=7))
@@ -94,28 +94,26 @@ def data_management_page():
     col1, col2 = st.columns(2)
     with col1:
         if st.button("开始增量更新", use_container_width=True):
-            st.session_state.data_log = "" # Clear previous logs
-            log_placeholder.code(st.session_state.data_log, language='log') # Clear display
             with st.spinner(f"正在更新从 {start_date.strftime('%Y-%m-%d')} 到 {end_date.strftime('%Y-%m-%d')} 的数据..."):
                 try:
-                    update_daily_data(qlib_1d_dir, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), "data_log")
+                    # Pass the placeholder directly for real-time updates
+                    update_daily_data(qlib_1d_dir, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), log_placeholder)
                     st.success("增量更新命令已成功执行！")
                 except Exception as e:
-                    st.error(f"增量更新过程中发生错误: {e}")
-            log_placeholder.code(st.session_state.data_log, language='log') # Update display with final logs
+                    st.error(f"增量更新过程中发生错误。详情请查看上方日志。")
+                    # The error details are already in the placeholder via the logger
 
     with col2:
         n_jobs = st.number_input("健康检查并行数 (n_jobs)", -1, 64, -1, help="设置用于并行计算的线程数。-1 表示使用所有可用的CPU核心。")
         if st.button("开始检查数据", use_container_width=True):
-            st.session_state.data_log = "" # Clear previous logs
-            log_placeholder.code(st.session_state.data_log, language='log') # Clear display
             with st.spinner(f"正在并行检查数据 (n_jobs={n_jobs})..."):
                 try:
-                    check_data_health(qlib_1d_dir, "data_log", n_jobs)
+                    # Pass the placeholder directly for real-time updates
+                    check_data_health(qlib_1d_dir, log_placeholder, n_jobs)
                     st.success("数据健康度检查已完成！详情请查看上方日志。")
                 except Exception as e:
-                    st.error(f"检查过程中发生错误: {e}")
-            log_placeholder.code(st.session_state.data_log, language='log') # Update display with final logs
+                    st.error(f"检查过程中发生错误。详情请查看上方日志。")
+                    # The error details are already in the placeholder via the logger
 
 def model_training_page():
     st.header("模型训练")
