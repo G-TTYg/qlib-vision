@@ -142,11 +142,10 @@ def run_command_with_log(command, placeholder, throttle_lines: int = 1, max_line
 
 def update_daily_data(qlib_dir, start_date, end_date, placeholder, source="yahoo"):
     script_path = get_collector_script_path(source)
-    command = f'"{sys.executable}" "{script_path}" update_data_to_bin --qlib_data_1d_dir "{qlib_dir}" --trading_date {start_date} --end_date {end_date}'
-    if source == "yahoo":
-        # Add parameters to speed up yahoo download
-        max_workers = max(multiprocessing.cpu_count() - 2, 1)
-        command += f" --max_workers={max_workers}"
+    # For both yahoo and baostock, we now pass max_workers to speed up the process.
+    # The collector scripts have been refactored or verified to handle this parameter.
+    max_workers = max(multiprocessing.cpu_count() - 2, 1)
+    command = f'"{sys.executable}" "{script_path}" update_data_to_bin --qlib_data_1d_dir "{qlib_dir}" --trading_date {start_date} --end_date {end_date} --max_workers {max_workers}'
     run_command_with_log(command, placeholder)
 
 def check_data_health(qlib_dir, placeholder, n_jobs=1):
