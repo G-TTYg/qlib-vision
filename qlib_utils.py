@@ -490,7 +490,9 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
             # BUG FIX: Handle cases where IC cannot be computed, which would crash the plotting function.
             # This can happen if predictions or labels are constant on a given day, resulting in NaN correlation.
             pred_label = dataset_for_eval.prepare("test", col_set=["feature", "label"])
-            pred_label["score"] = prediction_df
+            # Using .join() is a more robust way to merge the prediction scores
+            # with the features and labels, preventing potential dimension mismatch errors.
+            pred_label = pred_label.join(prediction_df)
             pred_label = pred_label.dropna()
 
             # Calculate IC series manually to check for validity before plotting
