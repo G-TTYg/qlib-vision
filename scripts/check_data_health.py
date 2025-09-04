@@ -1,202 +1,205 @@
 from loguru import logger
 import os
-from typing import Optional
-
+from typing import Optional, List, Dict, Any
 import fire
 import pandas as pd
 import qlib
 from tqdm import tqdm
-
 from qlib.data import D
+from joblib import Parallel, delayed
+
+# --- Helper function for parallel execution ---
+
+def check_instrument_data(
+    instrument: str,
+    freq: str,
+    required_fields: List[str],
+    large_step_threshold_price: float,
+    large_step_threshold_volume: float,
+    missing_data_num: int,
+) -> Dict[str, Any]:
+    """
+    Checks a single instrument for data completeness and correctness.
+    This function is designed to be called in parallel.
+    """
+    problems = {"instrument": instrument, "missing_data": {}, "large_steps": [], "missing_columns": [], "missing_factor": None}
+
+    try:
+        df = D.features([instrument], required_fields, freq=freq)
+        if df.empty:
+            problems["missing_data"] = {col: "all" for col in required_fields}
+            return problems
+
+        df.rename(
+            columns={
+                "$open": "open",
+                "$close": "close",
+                "$low": "low",
+                "$high": "high",
+                "$volume": "volume",
+                "$factor": "factor",
+            },
+            inplace=True,
+        )
+
+        # 1. Check for required columns
+        required_columns = ["open", "high", "low", "close", "volume"]
+        missing_cols = [col for col in required_columns if col not in df.columns]
+        if missing_cols:
+            problems["missing_columns"] = missing_cols
+
+        # 2. Check for missing data in existing columns
+        missing_counts = df.isnull().sum()
+        missing_data_cols = missing_counts[missing_counts > missing_data_num]
+        if not missing_data_cols.empty:
+            problems["missing_data"] = missing_data_cols.to_dict()
+
+        # 3. Check for large step changes
+        for col in ["open", "high", "low", "close", "volume"]:
+            if col in df.columns:
+                pct_change = df[col].pct_change(fill_method=None).abs()
+                threshold = large_step_threshold_volume if col == "volume" else large_step_threshold_price
+                if pct_change.max() > threshold:
+                    large_steps = pct_change[pct_change > threshold]
+                    problems["large_steps"].append(
+                        {
+                            "col_name": col,
+                            "date": large_steps.index.to_list()[0][1].strftime("%Y-%m-%d"),
+                            "pct_change": pct_change.max(),
+                        }
+                    )
+
+        # 4. Check for missing factor
+        if "factor" not in df.columns:
+            problems["missing_factor"] = "column_missing"
+        elif df["factor"].isnull().all():
+            problems["missing_factor"] = "all_nan"
+
+    except Exception as e:
+        problems["error"] = str(e)
+
+    return problems
 
 
 class DataHealthChecker:
-    """Checks a dataset for data completeness and correctness. The data will be converted to a pd.DataFrame and checked for the following problems:
-    - any of the columns ["open", "high", "low", "close", "volume"] are missing
-    - any data is missing
-    - any step change in the OHLCV columns is above a threshold (default: 0.5 for price, 3 for volume)
-    - any factor is missing
+    """
+    Checks a dataset for data completeness and correctness in parallel.
     """
 
     def __init__(
         self,
-        csv_path=None,
-        qlib_dir=None,
-        freq="day",
-        large_step_threshold_price=0.5,
-        large_step_threshold_volume=3,
-        missing_data_num=0,
+        qlib_dir: str,
+        freq: str = "day",
+        large_step_threshold_price: float = 0.5,
+        large_step_threshold_volume: float = 3.0,
+        missing_data_num: int = 0,
     ):
-        assert csv_path or qlib_dir, "One of csv_path or qlib_dir should be provided."
-        assert not (csv_path and qlib_dir), "Only one of csv_path or qlib_dir should be provided."
-
-        self.data = {}
-        self.problems = {}
+        self.qlib_dir = qlib_dir
         self.freq = freq
         self.large_step_threshold_price = large_step_threshold_price
         self.large_step_threshold_volume = large_step_threshold_volume
         self.missing_data_num = missing_data_num
 
-        if csv_path:
-            assert os.path.isdir(csv_path), f"{csv_path} should be a directory."
-            files = [f for f in os.listdir(csv_path) if f.endswith(".csv")]
-            for filename in tqdm(files, desc="Loading data"):
-                df = pd.read_csv(os.path.join(csv_path, filename))
-                self.data[filename] = df
+        qlib.init(provider_uri=self.qlib_dir)
 
-        elif qlib_dir:
-            qlib.init(provider_uri=qlib_dir)
-            self.load_qlib_data()
+    def check_data(self, n_jobs: int = 1, limit_nums: Optional[int] = None):
+        """
+        Main method to run the data health check.
 
-    def load_qlib_data(self):
+        Args:
+            n_jobs (int): Number of parallel jobs to run. -1 means use all available cores.
+            limit_nums (Optional[int]): Limit the number of instruments to check for debugging.
+        """
+        logger.info(f"Starting data health check with {n_jobs} parallel jobs...")
+
         instruments = D.instruments(market="all")
         instrument_list = D.list_instruments(instruments=instruments, as_list=True, freq=self.freq)
+
+        if limit_nums is not None:
+            instrument_list = instrument_list[:limit_nums]
+            logger.info(f"Checking a limited number of {len(instrument_list)} instruments.")
+
         required_fields = ["$open", "$close", "$low", "$high", "$volume", "$factor"]
-        for instrument in instrument_list:
-            df = D.features([instrument], required_fields, freq=self.freq)
-            df.rename(
-                columns={
-                    "$open": "open",
-                    "$close": "close",
-                    "$low": "low",
-                    "$high": "high",
-                    "$volume": "volume",
-                    "$factor": "factor",
-                },
-                inplace=True,
+
+        results = Parallel(n_jobs=n_jobs)(
+            delayed(check_instrument_data)(
+                instrument=inst,
+                freq=self.freq,
+                required_fields=required_fields,
+                large_step_threshold_price=self.large_step_threshold_price,
+                large_step_threshold_volume=self.large_step_threshold_volume,
+                missing_data_num=self.missing_data_num,
             )
-            self.data[instrument] = df
-        print(df)
+            for inst in tqdm(instrument_list, desc="Dispatching instrument checks")
+        )
 
-    def check_missing_data(self) -> Optional[pd.DataFrame]:
-        """Check if any data is missing in the DataFrame."""
-        result_dict = {
-            "instruments": [],
-            "open": [],
-            "high": [],
-            "low": [],
-            "close": [],
-            "volume": [],
+        self.summarize_results(results)
+
+    def summarize_results(self, results: List[Dict[str, Any]]):
+        """Aggregates and prints the problems found during the check."""
+        logger.info("Aggregating results...")
+
+        problems_found = False
+        summary = {
+            "missing_data": [],
+            "large_steps": [],
+            "missing_columns": [],
+            "missing_factor": [],
+            "errors": [],
         }
-        for filename, df in self.data.items():
-            missing_data_columns = df.isnull().sum()[df.isnull().sum() > self.missing_data_num].index.tolist()
-            if len(missing_data_columns) > 0:
-                result_dict["instruments"].append(filename)
-                result_dict["open"].append(df.isnull().sum()["open"])
-                result_dict["high"].append(df.isnull().sum()["high"])
-                result_dict["low"].append(df.isnull().sum()["low"])
-                result_dict["close"].append(df.isnull().sum()["close"])
-                result_dict["volume"].append(df.isnull().sum()["volume"])
 
-        result_df = pd.DataFrame(result_dict).set_index("instruments")
-        if not result_df.empty:
-            return result_df
-        else:
-            logger.info(f"✅ There are no missing data.")
-            return None
+        for res in results:
+            instrument = res["instrument"]
+            if res.get("error"):
+                summary["errors"].append({"instrument": instrument, "error": res["error"]})
+                problems_found = True
+            if res.get("missing_data"):
+                for col, count in res["missing_data"].items():
+                    summary["missing_data"].append({"instrument": instrument, "column": col, "missing_count": count})
+                problems_found = True
+            if res.get("large_steps"):
+                for step_info in res["large_steps"]:
+                    summary["large_steps"].append({"instrument": instrument, **step_info})
+                problems_found = True
+            if res.get("missing_columns"):
+                summary["missing_columns"].append({"instrument": instrument, "missing_columns": res["missing_columns"]})
+                problems_found = True
+            if res.get("missing_factor"):
+                summary["missing_factor"].append({"instrument": instrument, "reason": res["missing_factor"]})
+                problems_found = True
 
-    def check_large_step_changes(self) -> Optional[pd.DataFrame]:
-        """Check if there are any large step changes above the threshold in the OHLCV columns."""
-        result_dict = {
-            "instruments": [],
-            "col_name": [],
-            "date": [],
-            "pct_change": [],
-        }
-        for filename, df in self.data.items():
-            affected_columns = []
-            for col in ["open", "high", "low", "close", "volume"]:
-                if col in df.columns:
-                    pct_change = df[col].pct_change(fill_method=None).abs()
-                    threshold = self.large_step_threshold_volume if col == "volume" else self.large_step_threshold_price
-                    if pct_change.max() > threshold:
-                        large_steps = pct_change[pct_change > threshold]
-                        result_dict["instruments"].append(filename)
-                        result_dict["col_name"].append(col)
-                        result_dict["date"].append(large_steps.index.to_list()[0][1].strftime("%Y-%m-%d"))
-                        result_dict["pct_change"].append(pct_change.max())
-                        affected_columns.append(col)
+        print("\n" + "=" * 50)
+        print(f"Data Health Check Summary ({len(results)} files checked)")
+        print("=" * 50 + "\n")
 
-        result_df = pd.DataFrame(result_dict).set_index("instruments")
-        if not result_df.empty:
-            return result_df
-        else:
-            logger.info(f"✅ There are no large step changes in the OHLCV column above the threshold.")
-            return None
+        if not problems_found:
+            logger.success("✅ All checks passed. No issues found.")
+            return
 
-    def check_required_columns(self) -> Optional[pd.DataFrame]:
-        """Check if any of the required columns (OLHCV) are missing in the DataFrame."""
-        required_columns = ["open", "high", "low", "close", "volume"]
-        result_dict = {
-            "instruments": [],
-            "missing_col": [],
-        }
-        for filename, df in self.data.items():
-            if not all(column in df.columns for column in required_columns):
-                missing_required_columns = [column for column in required_columns if column not in df.columns]
-                result_dict["instruments"].append(filename)
-                result_dict["missing_col"] += missing_required_columns
+        if summary["missing_data"]:
+            logger.warning("Found missing data points:")
+            print(pd.DataFrame(summary["missing_data"]).to_string(index=False))
+            print("-" * 50)
 
-        result_df = pd.DataFrame(result_dict).set_index("instruments")
-        if not result_df.empty:
-            return result_df
-        else:
-            logger.info(f"✅ The columns (OLHCV) are complete and not missing.")
-            return None
+        if summary["large_steps"]:
+            logger.warning("Found large step changes:")
+            print(pd.DataFrame(summary["large_steps"]).to_string(index=False))
+            print("-" * 50)
 
-    def check_missing_factor(self) -> Optional[pd.DataFrame]:
-        """Check if the 'factor' column is missing in the DataFrame."""
-        result_dict = {
-            "instruments": [],
-            "missing_factor_col": [],
-            "missing_factor_data": [],
-        }
-        for filename, df in self.data.items():
-            if "000300" in filename or "000903" in filename or "000905" in filename:
-                continue
-            if "factor" not in df.columns:
-                result_dict["instruments"].append(filename)
-                result_dict["missing_factor_col"].append(True)
-            if df["factor"].isnull().all():
-                if filename in result_dict["instruments"]:
-                    result_dict["missing_factor_data"].append(True)
-                else:
-                    result_dict["instruments"].append(filename)
-                    result_dict["missing_factor_col"].append(False)
-                    result_dict["missing_factor_data"].append(True)
+        if summary["missing_columns"]:
+            logger.warning("Found missing required columns (OHLCV):")
+            print(pd.DataFrame(summary["missing_columns"]).to_string(index=False))
+            print("-" * 50)
 
-        result_df = pd.DataFrame(result_dict).set_index("instruments")
-        if not result_df.empty:
-            return result_df
-        else:
-            logger.info(f"✅ The `factor` column already exists and is not empty.")
-            return None
+        if summary["missing_factor"]:
+            logger.warning("Found missing factor data:")
+            print(pd.DataFrame(summary["missing_factor"]).to_string(index=False))
+            print("-" * 50)
 
-    def check_data(self):
-        check_missing_data_result = self.check_missing_data()
-        check_large_step_changes_result = self.check_large_step_changes()
-        check_required_columns_result = self.check_required_columns()
-        check_missing_factor_result = self.check_missing_factor()
-        if (
-            check_large_step_changes_result is not None
-            or check_large_step_changes_result is not None
-            or check_required_columns_result is not None
-            or check_missing_factor_result is not None
-        ):
-            print(f"\nSummary of data health check ({len(self.data)} files checked):")
-            print("-------------------------------------------------")
-            if isinstance(check_missing_data_result, pd.DataFrame):
-                logger.warning(f"There is missing data.")
-                print(check_missing_data_result)
-            if isinstance(check_large_step_changes_result, pd.DataFrame):
-                logger.warning(f"The OHLCV column has large step changes.")
-                print(check_large_step_changes_result)
-            if isinstance(check_required_columns_result, pd.DataFrame):
-                logger.warning(f"Columns (OLHCV) are missing.")
-                print(check_required_columns_result)
-            if isinstance(check_missing_factor_result, pd.DataFrame):
-                logger.warning(f"The factor column does not exist or is empty")
-                print(check_missing_factor_result)
+        if summary["errors"]:
+            logger.error("Encountered errors during checking:")
+            print(pd.DataFrame(summary["errors"]).to_string(index=False))
+            print("-" * 50)
 
 
 if __name__ == "__main__":

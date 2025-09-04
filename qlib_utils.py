@@ -97,9 +97,9 @@ def update_daily_data(qlib_dir, start_date, end_date, log_key):
     command = f'"{sys.executable}" "{script_path}" update_data_to_bin --qlib_data_1d_dir "{qlib_dir}" --trading_date {start_date} --end_date {end_date}'
     run_command_with_log(command, log_key)
 
-def check_data_health(qlib_dir, log_key):
+def check_data_health(qlib_dir, log_key, n_jobs=1):
     script_path = get_script_path("check_data_health.py")
-    command = f'"{sys.executable}" "{script_path}" check_data --qlib_dir "{qlib_dir}"'
+    command = f'"{sys.executable}" "{script_path}" check_data --qlib_dir "{qlib_dir}" --n_jobs {n_jobs}'
     run_command_with_log(command, log_key)
 
 def get_data_summary(qlib_dir_str: str):
