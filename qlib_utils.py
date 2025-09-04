@@ -17,6 +17,16 @@ import copy
 import io
 import json
 from contextlib import redirect_stdout, redirect_stderr
+import os
+
+# Silence mlflow git warnings.
+# Qlib's recorder uses mlflow, which tries to log git repository information.
+# In environments where git is not installed or not in the PATH, this causes
+# verbose warnings. The 'GIT_PYTHON_REFRESH' environment variable with the
+# value 'quiet' is the officially recommended way by the GitPython library
+# to suppress these warnings without causing an exception.
+os.environ['GIT_PYTHON_REFRESH'] = 'quiet'
+
 
 # --- Factor and Model Configurations ---
 HANDLER_ALPHA158 = { "class": "Alpha158", "module_path": "qlib.contrib.data.handler", "kwargs": { "start_time": "2014-01-01", "end_time": "2022-12-31", "fit_start_time": "2014-01-01", "fit_end_time": "2019-12-31", "instruments": "csi300" } }
@@ -208,6 +218,14 @@ def evaluate_model(model_path_str: str, qlib_dir: str):
         raise FileNotFoundError(f"Config file {config_path} not found for model {model_path.name}")
     with open(config_path, 'r') as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
+
+    # FIX: Ensure raw data (including labels) is not dropped for evaluation.
+    # This is to prevent errors in analysis due to missing label data.
+    try:
+        config["dataset"]["kwargs"]["handler"]["kwargs"]["drop_raw"] = False
+    except KeyError:
+        # If the keys don't exist, we don't need to do anything.
+        pass
 
     provider_uri = str(Path(qlib_dir).expanduser())
     if not exists_qlib_data(provider_uri):
