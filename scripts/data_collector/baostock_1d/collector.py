@@ -316,13 +316,12 @@ class Run(BaseRun):
         if end_date is None:
             end_date = (pd.Timestamp.now() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
-        self.download_data(delay=delay, start=trading_date, end=end_date, check_data_length=check_data_length)
-
         self.max_workers = (
             max(multiprocessing.cpu_count() - 2, 1)
             if self.max_workers is None or self.max_workers <= 1
             else self.max_workers
         )
+        self.download_data(delay=delay, start=trading_date, end=end_date, check_data_length=check_data_length)
         self.normalize_data_1d_extend(qlib_data_1d_dir)
 
         _dump = DumpDataUpdate(
