@@ -464,19 +464,25 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
             benchmark = "SH000300" if instruments == "csi300" else "SH000905"
             test_period = config["dataset"]["kwargs"]["segments"]["test"]
             port_analysis_config = { "strategy": { "class": "TopkDropoutStrategy", "module_path": "qlib.contrib.strategy", "kwargs": { "signal": prediction_df, "topk": 50, "n_drop": 5, }, }, "backtest": { "start_time": test_period[0], "end_time": test_period[1], "account": 100000000, "benchmark": benchmark, "exchange_kwargs": { "freq": "day", "limit_threshold": 0.095, "deal_price": "close", "open_cost": 0.0005, "close_cost": 0.0015, "min_cost": 5, }, }, }
-            par = PortAnaRecord(recorder, port_analysis_config, "day")
+            # BUG FIX: The PortAnaRecord class normalizes the frequency string.
+            # For example, a frequency of "day" passed to the constructor will be
+            # normalized to "1day" when creating artifact filenames.
+            # The code must load the artifacts with the normalized frequency name.
+            par = PortAnaRecord(recorder, port_analysis_config, risk_analysis_freq="day")
             par.generate()
-            # NOTE: The new qlib API saves portfolio analysis in two parts:
-            # 1. `port_analysis_day.pkl`: A DataFrame with detailed risk metrics.
-            # 2. `report_normal_day.pkl`: A DataFrame with daily account values for plotting.
-            portfolio_report = recorder.load_object("portfolio_analysis/port_analysis_day.pkl")
-            daily_report_for_graph = recorder.load_object("portfolio_analysis/report_normal_day.pkl")
+
+            # NOTE: The new qlib API saves portfolio analysis in multiple parts.
+            # We load the two main ones needed for the UI.
+            # 1. `port_analysis_1day.pkl`: A DataFrame with detailed risk metrics for the table view.
+            # 2. `report_normal_1day.pkl`: A DataFrame with daily account values for plotting the graph.
+            portfolio_report = recorder.load_object("portfolio_analysis/port_analysis_1day.pkl")
+            daily_report_for_graph = recorder.load_object("portfolio_analysis/report_normal_1day.pkl")
             print("--- 投资组合分析完成 ---")
 
             # 3. Generate graphs
             print("\n--- [3/3] 开始生成可视化图表 ---")
             # 3.1 Portfolio Analysis Graph
-            # The report_graph function expects the daily values report.
+            # The report_graph function expects the daily values report, which we loaded into daily_report_for_graph.
             report_figure = report_graph(daily_report_for_graph, show_notebook=False)[0]
             print("投资组合分析图表... Done")
 
