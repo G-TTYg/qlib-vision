@@ -86,14 +86,28 @@ BASE_DATASET = {
 }
 
 # --- Data Management Functions ---
-def get_script_path(script_name):
+def get_collector_script_path(source: str):
+    """Gets the path to the collector script based on the source."""
     app_dir = Path().resolve()
-    script_path = app_dir / "scripts" / script_name
-    if not script_path.exists():
-        script_path = app_dir / "scripts" / "data_collector" / "yahoo" / script_name
-        if not script_path.exists():
-             raise FileNotFoundError(f"Script '{script_name}' not found. Please ensure the 'scripts' folder from the Qlib GitHub repository is in the same directory as the application.")
-    return str(script_path)
+    script_name = "collector.py"
+    if source == "yahoo":
+        path = app_dir / "scripts" / "data_collector" / "yahoo" / script_name
+    elif source == "baostock":
+        path = app_dir / "scripts" / "data_collector" / "baostock_1d" / script_name
+    else:
+        raise ValueError(f"Unknown data source: {source}")
+
+    if not path.exists():
+        raise FileNotFoundError(f"Collector script for source '{source}' not found at {path}")
+    return str(path)
+
+def get_script_path(script_name):
+    """Gets the path for general scripts."""
+    app_dir = Path().resolve()
+    path = app_dir / "scripts" / script_name
+    if not path.exists():
+        raise FileNotFoundError(f"Script '{script_name}' not found at {path}")
+    return str(path)
 
 def run_command_with_log(command, placeholder, throttle_lines: int = 1, max_lines: int = 500):
     """
@@ -125,8 +139,8 @@ def run_command_with_log(command, placeholder, throttle_lines: int = 1, max_line
     if process.wait() != 0:
         raise subprocess.CalledProcessError(process.returncode, command, output=final_log)
 
-def update_daily_data(qlib_dir, start_date, end_date, placeholder):
-    script_path = get_script_path("collector.py")
+def update_daily_data(qlib_dir, start_date, end_date, placeholder, source="yahoo"):
+    script_path = get_collector_script_path(source)
     command = f'"{sys.executable}" "{script_path}" update_data_to_bin --qlib_data_1d_dir "{qlib_dir}" --trading_date {start_date} --end_date {end_date}'
     run_command_with_log(command, placeholder)
 

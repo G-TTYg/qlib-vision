@@ -84,6 +84,31 @@ def data_management_page():
     st.subheader("2. 增量更新与健康度检查")
     st.markdown("如果已有全量数据，可在此处更新到指定日期，或检查本地数据的完整性和质量。所有执行日志都会显示在下方。")
 
+    # Data source selection
+    st.markdown("#### 选择数据源")
+
+    def update_data_source():
+        st.session_state.settings["data_source"] = st.session_state.data_source_selector
+        save_settings(st.session_state.settings)
+
+    data_source_options = ["yahoo", "baostock"]
+    default_source = st.session_state.settings.get("data_source", "yahoo")
+    default_index = data_source_options.index(default_source) if default_source in data_source_options else 0
+
+    st.radio(
+        "选择您的数据下载源 (选择后将自动保存为默认)",
+        options=data_source_options,
+        index=default_index,
+        key="data_source_selector",
+        horizontal=True,
+        on_change=update_data_source,
+        help=(
+            "**Yahoo**: 覆盖全球市场，但在中国访问速度慢且不稳定。\n\n"
+            "**Baostock**: 仅覆盖中国A股，但在中国速度快，数据质量好。"
+        )
+    )
+    data_source = st.session_state.data_source_selector
+
     with st.container(height=400):
         log_placeholder = st.empty()
         log_placeholder.code("日志输出将显示在此处" , language='log')
@@ -95,14 +120,12 @@ def data_management_page():
     col1, col2 = st.columns(2)
     with col1:
         if st.button("开始增量更新", use_container_width=True):
-            with st.spinner(f"正在更新从 {start_date.strftime('%Y-%m-%d')} 到 {end_date.strftime('%Y-%m-%d')} 的数据..."):
+            with st.spinner(f"正在从 {data_source} 更新从 {start_date.strftime('%Y-%m-%d')} 到 {end_date.strftime('%Y-%m-%d')} 的数据..."):
                 try:
-                    # Pass the placeholder directly for real-time updates
-                    update_daily_data(qlib_1d_dir, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), log_placeholder)
+                    update_daily_data(qlib_1d_dir, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"), log_placeholder, source=data_source)
                     st.success("增量更新命令已成功执行！")
                 except Exception as e:
                     st.error(f"增量更新过程中发生错误。详情请查看上方日志。")
-                    # The error details are already in the placeholder via the logger
 
     with col2:
         n_jobs = st.number_input("健康检查并行数 (n_jobs)", -1, 64, -1, help="设置用于并行计算的线程数。-1 表示使用所有可用的CPU核心。")
