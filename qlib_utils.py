@@ -330,72 +330,78 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
         config_path = model_path.with_suffix(".yaml")
         if not config_path.exists():
             raise FileNotFoundError(f"Config file {config_path} not found for model {model_path.name}")
-        with open(config_path, 'r') as f:
-            config = yaml.load(f, Loader=yaml.FullLoader)
+        with open(config_path, "r") as f:
+            config = yaml.safe_load(f)
 
-        with open(model_path, 'rb') as f:
+        with open(model_path, "rb") as f:
             model = pickle.load(f)
 
-        # For evaluation, we need the labels, which requires the raw data.
-        # Create a new dataset config here with `drop_raw=False` to ensure labels are generated for the test period.
-        # This is a temporary, in-memory change and does not affect the saved model configuration.
         print("为保证评估顺利进行，临时创建`drop_raw=False`的数据集...")
         eval_dataset_config = copy.deepcopy(config["dataset"])
         eval_dataset_config["kwargs"]["handler"]["kwargs"]["drop_raw"] = False
         dataset_for_eval = init_instance_by_config(eval_dataset_config)
         print("数据集创建成功。")
 
-        # The test period is defined in the model's config file
-        test_period = config["dataset"]["kwargs"]["segments"]["test"]
+        with R.start(experiment_name="model_evaluation_streamlit", recorder_name="InMemoryRecorder", resume=True):
+            recorder = R.get_recorder()
 
-    # Dynamically set benchmark
-    instruments = config["dataset"]["kwargs"]["handler"]["kwargs"]["instruments"]
-    if instruments == "csi300":
-        benchmark = "SH000300"
-    elif instruments == "csi500":
-        benchmark = "SH000905"
-    else:
-        benchmark = "SH000300" # Default fallback
+            # 1. Generate prediction and run Signal Analysis
+            print("\n--- [1/2] 开始信号分析 (Signal Analysis) ---")
+            sr = SignalRecord(model, dataset_for_eval, recorder)
+            sr.generate()
 
-    port_analysis_config = {
-        "executor": {
-            "class": "SimulatorExecutor",
-            "module_path": "qlib.backtest.executor",
-            "kwargs": { "time_per_step": "day", "generate_portfolio_metrics": True, },
-        },
-        "strategy": {
-            "class": "TopkDropoutStrategy",
-            "module_path": "qlib.contrib.strategy.signal_strategy",
-            "kwargs": { "signal": (model, dataset_for_eval), "topk": 50, "n_drop": 5, },
-        },
-        "backtest": {
-            "start_time": test_period[0],
-            "end_time": test_period[1],
-            "account": 100000000,
-            "benchmark": benchmark,
-            "exchange_kwargs": { "freq": "day", "limit_threshold": 0.095, "deal_price": "close", "open_cost": 0.0005, "close_cost": 0.0015, "min_cost": 5, },
-        },
-    }
+            # Load the prediction from the recorder, which is now an artifact
+            prediction_df = recorder.load_object("pred.pkl")
 
-    # Use a new experiment name to avoid conflicts from previous failed runs
-    with R.start(experiment_name="model_evaluation_streamlit", recorder_name="InMemoryRecorder", resume=True):
-        recorder = R.get_recorder()
+            sar = SigAnaRecord(recorder, ana_long_short=False)
+            sar.generate()
+            signal_report = recorder.load_object("sig_ana/report_normal.pkl")
+            print("--- 信号分析完成 ---")
 
-        # 1. Signal Analysis
-        print("\n--- 开始信号分析 (Signal Analysis) ---")
-        sr = SignalRecord(model, dataset_for_eval, recorder)
-        sr.generate()
-        sar = SigAnaRecord(recorder, ana_long_short=False)
-        sar.generate()
-        signal_report = recorder.load_object("sig_ana/report_normal.pkl")
-        print("--- 信号分析完成 ---")
+            # 2. Run Portfolio Analysis using the generated prediction
+            print("\n--- [2/2] 开始投资组合分析 (Portfolio Analysis) ---")
 
-        # 2. Portfolio Analysis
-        print("\n--- 开始投资组合分析 (Portfolio Analysis) ---")
-        par = PortAnaRecord(recorder, port_analysis_config, "day")
-        par.generate()
-        portfolio_report = recorder.load_object("port_ana/report_normal.pkl")
-        print("--- 投资组合分析完成 ---")
+            # Dynamically set benchmark from config
+            instruments = config["dataset"]["kwargs"]["handler"]["kwargs"].get("instruments", "csi300")
+            if instruments == "csi300":
+                benchmark = "SH000300"
+            elif instruments == "csi500":
+                benchmark = "SH000905"
+            else:
+                benchmark = "SH000300"
+
+            test_period = config["dataset"]["kwargs"]["segments"]["test"]
+
+            port_analysis_config = {
+                "strategy": {
+                    "class": "TopkDropoutStrategy",
+                    "module_path": "qlib.contrib.strategy",
+                    "kwargs": {
+                        "signal": prediction_df, # Pass the loaded prediction DataFrame
+                        "topk": 50,
+                        "n_drop": 5,
+                    },
+                },
+                "backtest": {
+                    "start_time": test_period[0],
+                    "end_time": test_period[1],
+                    "account": 100000000,
+                    "benchmark": benchmark,
+                    "exchange_kwargs": {
+                        "freq": "day",
+                        "limit_threshold": 0.095,
+                        "deal_price": "close",
+                        "open_cost": 0.0005,
+                        "close_cost": 0.0015,
+                        "min_cost": 5,
+                    },
+                },
+            }
+
+            par = PortAnaRecord(recorder, port_analysis_config, "day")
+            par.generate()
+            portfolio_report = recorder.load_object("port_ana/report_normal.pkl")
+            print("--- 投资组合分析完成 ---")
 
     eval_log = log_stream.buffer if isinstance(log_stream, StreamlitLogHandler) else log_stream.getvalue()
     return {"signal": signal_report, "portfolio": portfolio_report}, eval_log
