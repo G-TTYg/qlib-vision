@@ -1,13 +1,10 @@
 import streamlit as st
-import os
-# Suppress the GitPython warning
-os.environ['GIT_PYTHON_REFRESH'] = 'quiet'
 import qlib
 from qlib.constant import REG_CN
 from pathlib import Path
 from qlib_utils import (
-    MODELS, FACTORS, train_model, predict, backtest_strategy,
-    update_daily_data, check_data_health, get_data_summary, get_historical_prediction,
+    SUPPORTED_MODELS, train_model, predict, backtest_strategy,
+    update_daily_data, check_data_health, get_historical_prediction,
     evaluate_model, load_settings, save_settings
 )
 import pandas as pd
@@ -19,29 +16,12 @@ import copy
 
 def data_management_page():
     st.header("数据管理")
-    with st.expander("💡 操作指南 (Operation Guide)"):
-        st.markdown("""
-        **本页面负责为Qlib准备和维护数据。高质量的数据是量化研究的基石。**
-
-        **- 核心作用:**
-          - **初始化数据**: 为首次使用的用户提供一个清晰、稳定的数据部署流程。
-          - **日常更新**: 让用户可以方便地将本地数据更新到最新的交易日。
-          - **数据质检**: 提供一个工具来检查本地数据的完整性和连续性，以避免在后续研究中出现因数据问题导致的错误。
-
-        **- 推荐使用流程:**
-          1. **首次使用**:
-             - **强烈建议**按照“全量数据部署”中的指引，在终端中手动执行命令来下载和解压由社区维护的数据包。这是最快、最稳定的方式。
-             - 通过`wget`下载后，使用`tar`命令解压到指定目录。
-          2. **日常维护**:
-             - 如果您已经拥有了全量数据，每天或定期使用“增量更新”功能即可。
-             - 选择一个开始日期（通常是上次更新日期的后一天）和结束日期（通常是今天），然后点击“开始增量更新”。下方日志窗口会实时显示更新过程。
-          3. **定期检查**:
-             - 建议定期（例如每月）运行一次“开始检查数据”，以确保您的数据没有缺失或中断。
-
-        **- 参数解释:**
-          - **Qlib数据路径**: 这是Qlib存放所有数据的根目录，包括股票日线、因子等。您可以在左侧边栏根据需要进行修改。
-          - **更新开始/结束日期**: 定义了增量更新的时间区间，程序会自动下载并处理这个区间内的所有交易日数据。
-        """)
+    st.markdown("""
+    本页面提供Qlib所需数据的管理功能。请遵循以下步骤：
+    - **首次使用者**: 请先按照“全量数据部署”中的指引，通过命令行手动下载并解压数据。这是最稳定、最推荐的初始化方式。
+    - **日常使用者**: 如果您已经部署了全量数据，可以使用“增量更新”功能来获取最新数据。
+    - **数据检查**: 您可以使用“健康度检查”来验证本地数据的完整性。
+    """)
 
     # Initialize session state for logs
     if "data_log" not in st.session_state:
@@ -51,21 +31,7 @@ def data_management_page():
     qlib_1d_dir = str(Path(qlib_dir) / "cn_data")
     st.info(f"当前Qlib数据路径: `{qlib_dir}` (可在左侧边栏修改)")
 
-    st.subheader("本地数据概览")
-    summary = get_data_summary(qlib_1d_dir)
-    if summary["error"]:
-        st.warning(f"无法加载数据概览: {summary['error']}")
-    else:
-        col1, col2 = st.columns(2)
-        col1.metric("数据覆盖范围", summary["date_range"])
-        col2.metric("股票池数量", len(summary["instruments"]))
-        with st.expander("查看详细信息"):
-            st.json({
-                "已发现的股票池文件": summary["instruments"],
-                "已发现的数据字段": summary["fields"]
-            })
-
-    with st.expander("1. 全量数据部署 (首次使用)", expanded=False):
+    with st.expander("1. 全量数据部署 (首次使用)", expanded=True):
         st.info("由于直接从雅虎财经大量下载数据不稳定，推荐通过以下步骤手动下载社区提供的数据包来完成首次数据部署。")
         st.markdown("""
         **请在您的终端中依次执行以下命令：**
@@ -116,33 +82,13 @@ def data_management_page():
 
 def model_training_page():
     st.header("模型训练")
-    with st.expander("💡 操作指南 (Operation Guide)"):
-        st.markdown("""
-        **本页面是进行量化模型训练的核心功能区。**
-
-        **- 核心作用:**
-          - **模型训练**: 基于选择的因子（特征）和股票池，训练一个机器学习或深度学习模型，用以预测未来的股票收益率。
-          - **增量学习**: 在已有的旧模型基础上，使用新的数据进行增量训练（Finetune），以达到让模型与时俱进的目的。
-          - **参数调优**: 提供界面让用户可以方便地调整模型的关键超参数，以探索最佳的模型配置。
-
-        **- 推荐使用流程:**
-          1. **选择模式**:
-             - 如果是第一次训练，或希望用全新的参数训练，选择“从零开始新训练”。
-             - 如果希望在之前训练好的模型上继续学习，选择“在旧模型上继续训练”，并选择一个已存在的`.pkl`模型文件。
-          2. **配置模型**:
-             - **选择模型**: 选择一个您希望使用的算法，如`LightGBM`（速度快，效果好）或`ALSTM`（深度学习，更复杂）。
-             - **选择因子**: 因子是模型的输入特征。`Alpha158`和`Alpha360`是Qlib提供的两套经典因子组合。
-             - **输入股票池名称**: 输入您的数据对应的股票池名称，例如`csi300`。请确保您本地有该股票池的数据。
-          3. **设置时间**:
-             - 合理地划分训练集、验证集和测试集。三者之间时间不能重叠，且要符合**训练 -> 验证 -> 测试**的先后顺序。
-          4. **调节超参数**:
-             - 对于GBDT类模型，您可以调整并行线程数(`n_jobs`设为-1可使用全部CPU核心以加速)、树的数量、深度、学习率等。好的超参数对模型效果至关重要。
-          5. **开始训练**:
-             - 点击“开始训练”，下方日志区会实时展示训练过程。训练结束后，模型文件（`.pkl`）和配置文件（`.yaml`）会自动保存在您设置的模型路径中。
-
-        **- 注意事项:**
-          - **内存警告**: Qlib在处理数据时会将所选时间段的全部数据加载到内存。如果您的时间范围过长、股票池过大，可能会导致内存不足。这是正常现象，请通过缩短时间范围或更换机器来解决。
-        """)
+    st.markdown("""
+    在这里，您可以训练自己的量化模型。
+    - **模型与因子**: Qlib提供了多种内置模型（如LightGBM, XGBoost等）和因子（如Alpha158, Alpha360）。
+    - **股票池**: 您可以选择在不同的股票池（如沪深300, 中证500）上进行训练。
+    - **训练模式**: 您可以从零开始训练一个全新的模型，或者在已有的模型基础上进行增量训练（Finetune）。
+    - **超参数**: 对于GBDT类的模型，您可以方便地调节树的数量、深度、学习率等关键超参数。
+    """)
 
     if "training_status" not in st.session_state:
         st.session_state.training_status = None
@@ -166,22 +112,11 @@ def model_training_page():
         else:
             st.warning(f"在 '{finetune_dir_path}' 中未找到任何 .pkl 模型文件。")
             return
-
     col1, col2 = st.columns(2)
-    model_name = col1.selectbox("选择模型", list(MODELS.keys()))
-    factor_name = col2.selectbox("选择因子", list(FACTORS.keys()))
-
-    # Dynamically create stock pool selection
-    summary = get_data_summary(qlib_1d_dir)
-    instrument_list = summary.get("instruments")
-    if instrument_list:
-        stock_pool = st.selectbox("选择股票池", options=instrument_list, help="这是从您的数据目录中自动扫描到的股票池列表。")
-    else:
-        st.warning("未在您的数据目录中扫描到股票池文件。请手动输入股票池名称。")
-        stock_pool = st.text_input("输入股票池名称 (例如 csi300)", "csi300")
-
+    model_name_key = col1.selectbox("选择模型和因子", list(SUPPORTED_MODELS.keys()))
+    stock_pool = col2.selectbox("选择股票池", ["csi300", "csi500"], index=0)
     custom_model_name = st.text_input("为新模型命名 (可选, 留空则使用默认名)")
-    if "ALSTM" in model_name:
+    if "ALSTM" in model_name_key:
         st.warning("️️️**注意：** ALSTM是深度学习模型，训练时间非常长，对电脑性能要求很高。")
 
     st.subheader("2. 数据段与时间范围")
@@ -198,23 +133,21 @@ def model_training_page():
 
 
     st.subheader("3. 超参数调节")
-    params = copy.deepcopy(MODELS[model_name]["kwargs"])
+    config = copy.deepcopy(SUPPORTED_MODELS[model_name_key])
+    params = config['task']['model']['kwargs']
     with st.expander("调节模型参数", expanded=True):
-        if any(m in model_name for m in ["LightGBM", "XGBoost", "CatBoost"]):
-            # Add n_jobs here for parallel processing
-            params['n_jobs'] = st.number_input("并行计算线程数 (n_jobs)", -1, 16, -1, help="设置用于并行计算的线程数。-1 表示使用所有可用的CPU核心。")
-
-            if "CatBoost" in model_name:
-                params['iterations'] = st.slider("迭代次数", 50, 500, params.get('iterations', 200), 10, key=f"it_{model_name}")
-                params['depth'] = st.slider("最大深度", 3, 15, params.get('depth', 7), key=f"depth_{model_name}")
+        if any(m in model_name_key for m in ["LightGBM", "XGBoost", "CatBoost"]):
+            if "CatBoost" in model_name_key:
+                params['iterations'] = st.slider("迭代次数", 50, 500, params.get('iterations', 200), 10, key=f"it_{model_name_key}")
+                params['depth'] = st.slider("最大深度", 3, 15, params.get('depth', 7), key=f"depth_{model_name_key}")
             else:
-                params['n_estimators'] = st.slider("树的数量", 50, 500, params.get('n_estimators', 200), 10, key=f"n_est_{model_name}")
-                params['max_depth'] = st.slider("最大深度", 3, 15, params.get('max_depth', 7), key=f"depth_{model_name}")
-            params['learning_rate'] = st.slider("学习率", 0.01, 0.2, params.get('learning_rate', 0.05), 0.01, key=f"lr_{model_name}")
-        elif "ALSTM" in model_name:
+                params['n_estimators'] = st.slider("树的数量", 50, 500, params.get('n_estimators', 200), 10, key=f"n_est_{model_name_key}")
+                params['max_depth'] = st.slider("最大深度", 3, 15, params.get('max_depth', 7), key=f"depth_{model_name_key}")
+            params['learning_rate'] = st.slider("学习率", 0.01, 0.2, params.get('learning_rate', 0.05), 0.01, key=f"lr_{model_name_key}")
+        elif "ALSTM" in model_name_key:
             st.info("ALSTM模型的超参数调节暂未在此界面支持。")
 
-    st.subheader("4. 开始训练与日志")
+    st.subheader("4. 开始训练")
     st.warning("""
     **重要：关于内存使用的说明**
 
@@ -227,16 +160,9 @@ def model_training_page():
     - **切换为小盘股**: `csi500`比`csi300`需要更多的内存。
     - **硬件升级**: 如果需要处理大规模数据，请在具有更大内存（RAM）的机器上运行。
     """)
-
-    log_placeholder = st.empty()
-    if st.session_state.training_log:
-        log_placeholder.code(st.session_state.training_log, language='log')
-
     if st.button("开始训练", key="btn_train"):
         st.session_state.training_status = None # Reset status on new run
-        st.session_state.training_log = "" # Clear log from session state
-        log_placeholder.empty() # Clear previous logs from the placeholder
-
+        st.session_state.training_log = "" # Clear previous logs
         with st.spinner("正在训练模型，此过程可能需要较长时间，请耐心等待..."):
             try:
                 # --- Config modification for time ranges ---
@@ -247,36 +173,41 @@ def model_training_page():
                     st.error("日期区间设置错误：必须遵循 训练 < 验证 < 测试 的顺序，且开始日期不能晚于结束日期。")
                     raise ValueError("日期顺序不正确。")
 
-                # Build segments and params for new train_model signature
+                config_with_dates = copy.deepcopy(config)
+
+                # Format dates to string
                 train_start_str, train_end_str = train_start.strftime("%Y-%m-%d"), train_end.strftime("%Y-%m-%d")
                 valid_start_str, valid_end_str = valid_start.strftime("%Y-%m-%d"), valid_end.strftime("%Y-%m-%d")
                 test_start_str, test_end_str = test_start.strftime("%Y-%m-%d"), test_end.strftime("%Y-%m-%d")
 
-                segments = {
-                    "train": (train_start_str, train_end_str),
-                    "valid": (valid_start_str, valid_end_str),
-                    "test": (test_start_str, test_end_str)
-                }
+                # Update handler
+                handler_kwargs = config_with_dates['task']['dataset']['kwargs']['handler']['kwargs']
+                handler_kwargs['start_time'] = train_start_str
+                handler_kwargs['end_time'] = test_end_str
+                handler_kwargs['fit_start_time'] = train_start_str
+                handler_kwargs['fit_end_time'] = train_end_str
 
-                model_params = params # `params` is already updated by the sliders
+                # Update dataset segments
+                dataset_segments = config_with_dates['task']['dataset']['kwargs']['segments']
+                dataset_segments['train'] = (train_start_str, train_end_str)
+                dataset_segments['valid'] = (valid_start_str, valid_end_str)
+                dataset_segments['test'] = (test_start_str, test_end_str)
 
                 saved_path, training_log = train_model(
-                    qlib_dir=qlib_dir,
-                    models_save_dir=models_save_dir,
-                    model_name=model_name,
-                    factor_name=factor_name,
-                    stock_pool=stock_pool,
-                    segments=segments,
-                    model_params=model_params,
-                    custom_model_name=custom_model_name if custom_model_name else None,
-                    finetune_model_path=finetune_model_path,
-                    log_placeholder=log_placeholder
+                    model_name_key,
+                    qlib_dir,
+                    models_save_dir,
+                    config_with_dates, # Pass the modified config
+                    custom_model_name if custom_model_name else None,
+                    stock_pool,
+                    finetune_model_path
                 )
                 st.session_state.training_status = {"status": "success", "message": f"模型训练成功！已保存至: {saved_path}"}
-                st.session_state.training_log = training_log # Save for persistence if needed
+                st.session_state.training_log = training_log
             except Exception as e:
                 st.session_state.training_status = {"status": "error", "message": f"训练过程中发生错误: {e}"}
-                # The log placeholder already contains the error details from the redirected stderr
+                st.session_state.training_log = st.session_state.get('training_log', '') + f"\n\nERROR: {e}"
+
 
     if st.session_state.training_status:
         status = st.session_state.training_status
@@ -286,29 +217,17 @@ def model_training_page():
         elif status["status"] == "error":
             st.error(status["message"])
 
+    if st.session_state.training_log:
+        st.subheader("训练日志")
+        st.code(st.session_state.training_log, language='log')
+
 def prediction_page():
     st.header("投资组合预测")
-    with st.expander("💡 操作指南 (Operation Guide)"):
-        st.markdown("""
-        **本页面利用已训练好的模型进行预测，帮助您分析和比较模型的预测结果。**
-
-        **- 核心作用:**
-          - **横向对比**: 在同一天，用多个不同的模型对全市场或特定股票池的股票进行打分，直观地比较哪个模型表现更好。
-          - **纵向分析**: 追踪单个模型对某一只特定股票在一段时间内的评分变化，以判断模型对该股票的看法是否稳定、是否存在趋势。
-
-        **- 功能解释:**
-          - **1. 多模型对比预测 (单日)**:
-            - **用途**: 用于模型“选美”。例如，您用不同参数训练了三个LightGBM模型，您想知道在`2023-01-05`这一天，哪个模型选出的股票表现最好。
-            - **操作**: 选择一个或多个您想要对比的模型，选择一个预测日期，然后点击“执行对比预测”。
-            - **结果**: 会生成一个包含所有模型打分的数据表，并绘制一张条形图，展示综合评分最高的10只股票以及每个模型对它们的具体打分。
-          - **2. 单一股票历史分数追踪**:
-            - **用途**: 用于深度分析单个模型对某只股票的“偏见”或“看法”。例如，您想知道您训练的模型是否长期看好贵州茅台（SH600519）。
-            - **操作**: 选择一个模型，输入您关心的股票代码（如`SH600519`），选择一个历史时间段，然后点击“开始追踪”。
-            - **结果**: 会生成一张折线图，展示在该时间段内，模型每天对这只股票的评分。如果分数持续走高，说明模型近期看好该股票。
-
-        **- 注意事项:**
-          - 历史分数追踪功能需要对时间范围内的每一天都进行一次预测，因此如果时间跨度太长，可能会比较耗时。
-        """)
+    st.markdown("""
+    本页面提供两种预测模式：
+    - **多模型对比预测**: 选择多个模型，对单一日期的所有股票进行打分。您可以查看分数的数据表，以及Top-10股票的分数对比图。这有助于横向比较不同模型在同一时间点上的优劣。
+    - **单一股票历史分数追踪**: 选择一个模型和一只股票，查看该模型在过去一段时间内对这只股票的评分变化。这有助于分析模型对特定股票的判断是否具有时间上的一致性。
+    """)
 
     # Initialize session state
     if "pred_results" not in st.session_state:
@@ -391,34 +310,13 @@ def prediction_page():
 
 def backtesting_page():
     st.header("策略回测")
-    with st.expander("💡 操作指南 (Operation Guide)"):
-        st.markdown("""
-        **本页面基于您训练好的模型，运行一个具体、透明的交易策略，以评估模型的实战表现。**
-
-        **- 核心作用:**
-          - **实战模拟**: 将模型的预测分数转化为实际的买卖操作，并在历史数据上进行模拟交易，以检验模型的盈利能力。
-          - **策略探索**: 您可以调整策略参数，观察其对最终收益、风险和交易成本的影响。
-
-        **- 策略解释: Top-K Dropout**
-          - 这是一个非常经典的选股策略。
-          - **操作流程**: 在每个交易日，根据您的模型给出的分数，买入得分最高的 `K` 只股票。买入后，持有 `N` 天，然后在第N天后卖出。
-          - **例如**: 设置 `Top-K=50`, `持有期=5`。程序会在今天买入模型评分最高的50只股票，5个交易日后，将这些股票全部卖出。每天如此循环。
-
-        **- 参数解释:**
-          - **回测参数**:
-            - `开始/结束日期`: 定义了进行模拟交易的历史时间段。
-          - **策略参数**:
-            - `买入Top-K只股票`: 每天买入多少只股票。K值越小，策略越集中，风险和潜在收益都可能更高。
-            - `持有期(天)`: 每只股票买入后持有几天。持有期越短，交易越频繁，换手率和交易成本会更高。
-          - **交易参数**:
-            - `开/平仓手续费率`: 模拟真实交易中券商收取的手续费。
-            - `最低手续费`: 很多券商有单笔最低5元的收费标准。
-
-        **- 操作流程:**
-          1. 选择一个您希望进行回测的模型。
-          2. 设置回测的时间范围、策略参数和交易参数。
-          3. 点击“开始回测”，下方会生成包含“年化收益率”、“最大回撤”等关键指标的绩效报告，以及策略净值和基准对比的资金曲线图。
-        """)
+    st.markdown("""
+    本页面基于您训练好的模型，进行Top-K选股并持有N天的交易策略，在指定的历史时间段内进行模拟交易，以评估模型的实战表现。
+    - **回测参数**: 设置回测的开始和结束日期。
+    - **策略参数**: `Top-K`指每日买入模型评分最高的K只股票，`持有期`指每只股票买入后持有N天再卖出。
+    - **交易参数**: 您可以设置交易的手续费率和最低费用，以更真实地模拟交易成本。
+    最终会生成策略的详细绩效指标（年化收益、夏普比率、最大回撤等）和资金曲线图。
+    """)
 
     if "backtest_results" not in st.session_state:
         st.session_state.backtest_results = None
@@ -465,52 +363,36 @@ def backtesting_page():
 
     if st.session_state.backtest_results:
         st.success("回测完成！")
-        st.subheader("绩效指标")
         report_df = st.session_state.backtest_results["report"]
-        metrics = report_df.loc["excess_return_with_cost"]
-        kpi_cols = st.columns(4)
-        kpi_cols[0].metric("年化收益率", f"{metrics['annualized_return']:.2%}")
-        kpi_cols[1].metric("夏普比率", f"{metrics['information_ratio']:.2f}")
-        kpi_cols[2].metric("最大回撤", f"{metrics['max_drawdown']:.2%}")
-        kpi_cols[3].metric("换手率", f"{metrics['turnover_rate']:.2f}")
+
         st.subheader("资金曲线")
         st.plotly_chart(st.session_state.backtest_results["fig"], use_container_width=True)
 
+        st.subheader("绩效指标")
+        # Check for the existence of the key before accessing it to prevent crashes
+        if "excess_return_with_cost" in report_df.index:
+            metrics = report_df.loc["excess_return_with_cost"]
+            kpi_cols = st.columns(4)
+            kpi_cols[0].metric("年化收益率", f"{metrics['annualized_return']:.2%}")
+            kpi_cols[1].metric("夏普比率", f"{metrics['information_ratio']:.2f}")
+            kpi_cols[2].metric("最大回撤", f"{metrics['max_drawdown']:.2%}")
+            kpi_cols[3].metric("换手率", f"{metrics['turnover_rate']:.2f}")
+        else:
+            st.warning("无法计算部分详细绩效指标。这通常是由于回测时间段内的数据质量问题（如存在NaN值）导致的。")
+
+        with st.expander("查看原始回测报告"):
+            st.dataframe(report_df)
+
 def model_evaluation_page():
     st.header("模型评估")
-    with st.expander("💡 操作指南 (Operation Guide)"):
-        st.markdown("""
-        **本页面对单个模型进行一次全面、标准化的体检，是评判模型好坏的关键。**
+    st.markdown("""
+    本页面对单个模型进行全面的性能评估，包含两个核心部分：
+    - **信号分析 (Signal Analysis)**: 评估模型预测信号（即股票分数）自身的质量，如IC、Rank IC等。这反映了模型的预测能力，与具体交易策略无关。
+    - **组合分析 (Portfolio Analysis)**: 基于模型信号，运行一个标准的Top-K策略，并分析该策略的绩效。这反映了模型在模拟实战中的表现，包含年化收益、夏普比率、最大回撤等指标。
+    """)
 
-        **- 核心作用:**
-          - **综合评估**: 从“预测准确度”和“模拟实战”两个维度，对模型进行深度分析，避免单一指标带来的误判。
-          - **标准化流程**: 所有模型都走同一套评估流程，确保了不同模型之间性能的可比性。
-
-        **- 报告解读:**
-          - **1. 信号分析 (Signal Analysis)**:
-            - **用途**: 评估模型预测的“分数”（Signal）本身的质量，即预测的有多准，与交易策略无关。
-            - **关键指标**:
-              - `IC (Information Coefficient)`: 信息系数，衡量预测值与真实值之间的相关性。IC的绝对值越高，说明预测越准。通常大于0.02就认为有一定预测能力。
-              - `Rank IC`: 等级信息系数，衡量预测值的排序与真实值的排序之间的相关性。在选股任务中，排序比具体数值更重要，因此这是更关键的指标。
-              - `ICIR`, `Rank ICIR`: IC和Rank IC的均值除以其标准差，衡量IC的稳定性。大于0.3通常被认为是不错的水平。
-          - **2. 组合分析 (Portfolio Analysis)**:
-            - **用途**: 基于模型分数，模拟一个标准的“Top-K”选股策略，看这个策略在历史上的表现如何。这反映了模型在实战中的潜力。
-            - **关键指标**:
-              - `annualized_return` (年化收益率): 策略的年化收益水平。
-              - `information_ratio` (信息比率): 策略的超额收益（相对于基准）与其波动性的比率，是衡量主动投资管理能力的核心指标（类似夏普比率）。
-              - `max_drawdown` (最大回撤): 策略历史上从最高点回落到最低点的最大幅度，是衡量风险的重要指标。
-              - `turnover_rate` (换手率): 衡量交易的频繁程度。过高的换手率会侵蚀利润。
-
-        **- 操作流程:**
-          1. 从下拉框中选择一个您已经训练好的模型。
-          2. 点击“开始评估”，等待几分钟，下方会生成两份详细的报告。
-        """)
-
-    # Initialize session state
     if "eval_results" not in st.session_state:
         st.session_state.eval_results = None
-    if "evaluation_log" not in st.session_state:
-        st.session_state.evaluation_log = ""
 
     qlib_dir = st.session_state.settings.get("qlib_data_path", str(Path.home() / ".qlib" / "qlib_data" / "cn_data"))
     models_dir = st.session_state.settings.get("models_path", str(Path.home() / "qlib_models"))
@@ -524,27 +406,18 @@ def model_evaluation_page():
 
     selected_model_name = st.selectbox("选择一个模型文件进行评估", available_models, key="eval_model_select")
 
-    st.subheader("评估日志")
-    log_placeholder = st.empty()
-    if st.session_state.evaluation_log:
-        log_placeholder.code(st.session_state.evaluation_log, language='log')
-
     if st.button("开始评估", key="btn_eval"):
         if not selected_model_name:
             st.warning("请选择一个模型。")
             st.session_state.eval_results = None
         else:
-            st.session_state.evaluation_log = "" # Clear previous logs
-            log_placeholder.empty()
             with st.spinner("正在执行评估，这可能需要几分钟时间..."):
                 try:
                     model_path = str(models_dir_path / selected_model_name)
-                    results, eval_log = evaluate_model(model_path, qlib_dir, log_placeholder=log_placeholder)
+                    results = evaluate_model(model_path, qlib_dir)
                     st.session_state.eval_results = results
-                    st.session_state.evaluation_log = eval_log
                 except Exception as e:
                     st.error(f"评估过程中发生错误: {e}")
-                    # The log placeholder already contains the error details
                     st.session_state.eval_results = None
 
     if st.session_state.eval_results:
