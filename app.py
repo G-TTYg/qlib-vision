@@ -84,8 +84,9 @@ def data_management_page():
     st.subheader("2. 增量更新与健康度检查")
     st.markdown("如果已有全量数据，可在此处更新到指定日期，或检查本地数据的完整性和质量。所有执行日志都会显示在下方。")
 
-    log_placeholder = st.empty()
-    log_placeholder.code("日志输出将显示在此处" , language='log')
+    with st.container(height=400):
+        log_placeholder = st.empty()
+        log_placeholder.code("日志输出将显示在此处" , language='log')
 
     col1, col2 = st.columns(2)
     start_date = col1.date_input("更新开始日期", datetime.date.today() - datetime.timedelta(days=7))
@@ -245,9 +246,12 @@ def model_training_page():
     - **硬件升级**: 如果需要处理大规模数据，请在具有更大内存（RAM）的机器上运行。
     """)
 
-    log_placeholder = st.empty()
-    if st.session_state.training_log:
-        log_placeholder.code(st.session_state.training_log, language='log')
+    with st.container(height=400):
+        log_placeholder = st.empty()
+        if st.session_state.training_log:
+            log_placeholder.code(st.session_state.training_log, language='log')
+        else:
+            log_placeholder.code("训练日志将显示在此处", language='log')
 
     if st.button("开始训练", key="btn_train"):
         st.session_state.training_status = None # Reset status on new run
@@ -527,7 +531,8 @@ def backtesting_page():
         st.plotly_chart(st.session_state.backtest_results["fig"], use_container_width=True)
 
         with st.expander("查看详细分析报告"):
-            st.dataframe(analysis_df)
+            with st.container(height=300):
+                st.dataframe(analysis_df)
 
 def model_evaluation_page():
     st.header("模型评估")
@@ -578,9 +583,13 @@ def model_evaluation_page():
     selected_model_name = st.selectbox("选择一个模型文件进行评估", available_models, key="eval_model_select")
 
     st.subheader("评估日志")
-    log_placeholder = st.empty()
-    if st.session_state.evaluation_log:
-        log_placeholder.code(st.session_state.evaluation_log, language='log')
+    with st.container(height=400):
+        log_placeholder = st.empty()
+        if st.session_state.evaluation_log:
+            log_placeholder.code(st.session_state.evaluation_log, language='log')
+        else:
+            log_placeholder.code("评估日志将显示在此处", language='log')
+
 
     if st.button("开始评估", key="btn_eval"):
         if not selected_model_name:
