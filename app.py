@@ -360,11 +360,14 @@ def prediction_page():
 
     prediction_date = st.date_input("选择预测日期", datetime.date.today() - datetime.timedelta(days=1))
 
+    progress_placeholder = st.empty()
+
     if st.button("执行对比预测", key="btn_pred") and selected_models:
         with st.spinner("正在执行预测..."):
             try:
                 all_preds = []
-                for model_name in selected_models:
+                for i, model_name in enumerate(selected_models):
+                    progress_placeholder.text(f"正在预测第 {i+1}/{len(selected_models)} 个模型: {model_name}...")
                     model_path = str(models_dir_path / model_name)
                     pred_df = predict(model_path, qlib_dir, prediction_date.strftime("%Y-%m-%d"))
                     pred_df = pred_df.rename(columns={"score": f"score_{model_name.replace('.pkl', '')}"})
@@ -401,6 +404,8 @@ def prediction_page():
     hist_start_date = col3.date_input("追踪开始日期", datetime.date.today() - datetime.timedelta(days=90))
     hist_end_date = col4.date_input("追踪结束日期", datetime.date.today() - datetime.timedelta(days=1))
 
+    hist_progress_placeholder = st.empty()
+
     if st.button("开始追踪", key="btn_hist"):
         if not single_model_name or not stock_id_input:
             st.warning("请选择一个模型并输入股票代码。")
@@ -409,7 +414,7 @@ def prediction_page():
             with st.spinner(f"正在为股票 {stock_id_input} 获取历史分数..."):
                 try:
                     single_model_path = str(models_dir_path / single_model_name)
-                    hist_df = get_historical_prediction(single_model_path, qlib_dir, stock_id_input.upper(), str(hist_start_date), str(hist_end_date))
+                    hist_df = get_historical_prediction(single_model_path, qlib_dir, stock_id_input.upper(), str(hist_start_date), str(hist_end_date), placeholder=hist_progress_placeholder)
                     if hist_df.empty:
                         st.session_state.hist_results = {"status": "empty"}
                     else:

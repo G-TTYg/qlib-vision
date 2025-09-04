@@ -77,8 +77,11 @@ def get_script_path(script_name):
              raise FileNotFoundError(f"Script '{script_name}' not found. Please ensure the 'scripts' folder from the Qlib GitHub repository is in the same directory as the application.")
     return str(script_path)
 
-def run_command_with_log(command, placeholder):
-    """Runs a command and streams its output to a Streamlit placeholder in real-time."""
+def run_command_with_log(command, placeholder, throttle_lines: int = 1):
+    """
+    Runs a command and streams its output to a Streamlit placeholder in real-time.
+    Includes optional throttling to prevent UI freezes with rapid output.
+    """
     buffer = f"Running command: {command}\n\n"
     placeholder.code(buffer, language='log')
 
@@ -86,9 +89,17 @@ def run_command_with_log(command, placeholder):
         command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, encoding='utf-8', errors='replace'
     )
+
+    line_count = 0
     for line in iter(process.stdout.readline, ''):
         buffer += line
-        placeholder.code(buffer, language='log') # Update placeholder in real-time
+        line_count += 1
+        # Update the UI every `throttle_lines` to prevent freezing
+        if line_count % throttle_lines == 0:
+            placeholder.code(buffer, language='log')
+
+    # Ensure the final, complete log is always displayed regardless of throttling
+    placeholder.code(buffer, language='log')
 
     process.stdout.close()
 
@@ -104,7 +115,8 @@ def update_daily_data(qlib_dir, start_date, end_date, placeholder):
 def check_data_health(qlib_dir, placeholder, n_jobs=1):
     script_path = get_script_path("check_data_health.py")
     command = f'"{sys.executable}" "{script_path}" check_data --qlib_dir "{qlib_dir}" --n_jobs {n_jobs}'
-    run_command_with_log(command, placeholder)
+    # Use throttled logging for this high-volume output task
+    run_command_with_log(command, placeholder, throttle_lines=20)
 
 def get_data_summary(qlib_dir_str: str):
     """Scans the Qlib data directory and returns a summary of its contents."""
@@ -308,13 +320,15 @@ def backtest_strategy(model_path_str: str, qlib_dir: str, start_time: str, end_t
     # Return both the daily report for plotting and the analysis report for metrics
     return report_df, analysis_df
 
-def get_historical_prediction(model_path_str: str, qlib_dir: str, stock_id: str, start_date: str, end_date: str):
+def get_historical_prediction(model_path_str: str, qlib_dir: str, stock_id: str, start_date: str, end_date: str, placeholder=None):
     # This can be slow as it predicts day by day
     all_scores = []
     date_range = pd.date_range(start=start_date, end=end_date, freq='B') # Business days
 
-    for date in date_range:
+    for i, date in enumerate(date_range):
         date_str = date.strftime("%Y-%m-%d")
+        if placeholder:
+            placeholder.text(f"正在预测第 {i+1}/{len(date_range)} 天: {date_str}")
         try:
             pred_df = predict(model_path_str, qlib_dir, date_str)
             stock_score = pred_df[pred_df['StockID'] == stock_id]
