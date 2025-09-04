@@ -12,6 +12,7 @@ from joblib import Parallel, delayed
 
 def check_instrument_data(
     instrument: str,
+    qlib_dir: str, # Added qlib_dir for initialization
     freq: str,
     required_fields: List[str],
     large_step_threshold_price: float,
@@ -25,6 +26,8 @@ def check_instrument_data(
     problems = {"instrument": instrument, "missing_data": {}, "large_steps": [], "missing_columns": [], "missing_factor": None}
 
     try:
+        # Initialize qlib in each worker process
+        qlib.init(provider_uri=qlib_dir)
         df = D.features([instrument], required_fields, freq=freq)
         if df.empty:
             problems["missing_data"] = {col: "all" for col in required_fields}
@@ -124,6 +127,7 @@ class DataHealthChecker:
         results = Parallel(n_jobs=n_jobs)(
             delayed(check_instrument_data)(
                 instrument=inst,
+                qlib_dir=self.qlib_dir,
                 freq=self.freq,
                 required_fields=required_fields,
                 large_step_threshold_price=self.large_step_threshold_price,
