@@ -13,6 +13,7 @@ plotly
 # Dependencies for the data download script
 yahooquery
 requests_cache
+baostock
 
 # Dependencies for optional models supported by the UI
 xgboost
