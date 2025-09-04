@@ -635,23 +635,43 @@ def model_evaluation_page():
     if st.session_state.eval_results:
         st.success("模型评估完成！")
 
-        st.subheader("1. 信号分析 (Signal Analysis)")
-        signal_report = st.session_state.eval_results["signal"]
-        st.dataframe(signal_report)
+        # Unpack results
+        results = st.session_state.eval_results
+        signal_report = results["signal"]
+        portfolio_report = results["portfolio"]
+        report_figure = results.get("report_figure") # Use .get for graceful failure
+        ic_figure = results.get("ic_figure")
 
-        st.subheader("2. 组合分析 (Portfolio Analysis)")
-        portfolio_report = st.session_state.eval_results["portfolio"]
+        # Create tabs for results
+        tab1, tab2 = st.tabs(["图表分析 (Visualizations)", "详细数据 (Data Tables)"])
 
-        st.markdown("**关键绩效指标 (KPIs)**")
-        metrics = portfolio_report.loc["excess_return_with_cost"]
-        kpi_cols = st.columns(4)
-        kpi_cols[0].metric("年化收益率", f"{metrics['annualized_return']:.2%}")
-        kpi_cols[1].metric("夏普比率", f"{metrics['information_ratio']:.2f}")
-        kpi_cols[2].metric("最大回撤", f"{metrics['max_drawdown']:.2%}")
-        kpi_cols[3].metric("换手率", f"{metrics['turnover_rate']:.2f}")
+        with tab1:
+            st.subheader("投资组合分析 (Portfolio Analysis)")
+            if report_figure:
+                st.plotly_chart(report_figure, use_container_width=True)
+            else:
+                st.warning("未能生成投资组合分析图表。")
 
-        st.markdown("**详细回测报告**")
-        st.dataframe(portfolio_report)
+            st.subheader("IC 分析 (IC Analysis)")
+            if ic_figure:
+                st.plotly_chart(ic_figure, use_container_width=True)
+            else:
+                st.warning("未能生成IC分析图表。")
+
+        with tab2:
+            st.subheader("1. 信号分析 (Signal Analysis)")
+            st.dataframe(signal_report)
+
+            st.subheader("2. 组合分析 (Portfolio Analysis)")
+            st.markdown("**关键绩效指标 (KPIs)**")
+            metrics = portfolio_report.loc["excess_return_with_cost"]
+            kpi_cols = st.columns(4)
+            kpi_cols[0].metric("年化收益率", f"{metrics['annualized_return']:.2%}")
+            kpi_cols[1].metric("夏普比率", f"{metrics['information_ratio']:.2f}")
+            kpi_cols[2].metric("最大回撤", f"{metrics['max_drawdown']:.2%}")
+            kpi_cols[3].metric("换手率", f"{metrics['turnover_rate']:.2f}")
+            st.markdown("**详细回测报告**")
+            st.dataframe(portfolio_report)
 
 def main():
     st.set_page_config(layout="wide", page_title="Qlib 可视化工具")

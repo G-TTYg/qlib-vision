@@ -409,6 +409,7 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
     from qlib.utils import init_instance_by_config
     from qlib.workflow import R
     from qlib.workflow.record_temp import SignalRecord, PortAnaRecord, SigAnaRecord
+    from qlib.contrib.report.analysis_position import report_graph, score_ic_graph
 
     log_stream = StreamlitLogHandler(log_placeholder) if log_placeholder else io.StringIO()
     with redirect_stdout(log_stream), redirect_stderr(log_stream):
@@ -438,59 +439,43 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
             print("\n--- [1/2] 开始信号分析 (Signal Analysis) ---")
             sr = SignalRecord(model, dataset_for_eval, recorder)
             sr.generate()
-
-            # Load the prediction from the recorder, which is now an artifact
             prediction_df = recorder.load_object("pred.pkl")
-
             sar = SigAnaRecord(recorder, ana_long_short=False)
             sar.generate()
             signal_report = recorder.load_object("sig_ana/report_normal.pkl")
             print("--- 信号分析完成 ---")
 
-            # 2. Run Portfolio Analysis using the generated prediction
+            # 2. Run Portfolio Analysis
             print("\n--- [2/2] 开始投资组合分析 (Portfolio Analysis) ---")
-
-            # Dynamically set benchmark from config
             instruments = config["dataset"]["kwargs"]["handler"]["kwargs"].get("instruments", "csi300")
-            if instruments == "csi300":
-                benchmark = "SH000300"
-            elif instruments == "csi500":
-                benchmark = "SH000905"
-            else:
-                benchmark = "SH000300"
-
+            benchmark = "SH000300" if instruments == "csi300" else "SH000905"
             test_period = config["dataset"]["kwargs"]["segments"]["test"]
-
-            port_analysis_config = {
-                "strategy": {
-                    "class": "TopkDropoutStrategy",
-                    "module_path": "qlib.contrib.strategy",
-                    "kwargs": {
-                        "signal": prediction_df, # Pass the loaded prediction DataFrame
-                        "topk": 50,
-                        "n_drop": 5,
-                    },
-                },
-                "backtest": {
-                    "start_time": test_period[0],
-                    "end_time": test_period[1],
-                    "account": 100000000,
-                    "benchmark": benchmark,
-                    "exchange_kwargs": {
-                        "freq": "day",
-                        "limit_threshold": 0.095,
-                        "deal_price": "close",
-                        "open_cost": 0.0005,
-                        "close_cost": 0.0015,
-                        "min_cost": 5,
-                    },
-                },
-            }
-
+            port_analysis_config = { "strategy": { "class": "TopkDropoutStrategy", "module_path": "qlib.contrib.strategy", "kwargs": { "signal": prediction_df, "topk": 50, "n_drop": 5, }, }, "backtest": { "start_time": test_period[0], "end_time": test_period[1], "account": 100000000, "benchmark": benchmark, "exchange_kwargs": { "freq": "day", "limit_threshold": 0.095, "deal_price": "close", "open_cost": 0.0005, "close_cost": 0.0015, "min_cost": 5, }, }, }
             par = PortAnaRecord(recorder, port_analysis_config, "day")
             par.generate()
             portfolio_report = recorder.load_object("port_ana/report_normal.pkl")
             print("--- 投资组合分析完成 ---")
 
+            # 3. Generate graphs
+            print("\n--- [3/3] 开始生成可视化图表 ---")
+            # 3.1 Portfolio Analysis Graph
+            report_figure = report_graph(portfolio_report, show_notebook=False)[0]
+            print("投资组合分析图表... Done")
+
+            # 3.2 Score IC Graph
+            pred_label = dataset_for_eval.prepare("test", col_set=["feature", "label"])
+            pred_label["score"] = prediction_df
+            pred_label = pred_label.dropna()
+            ic_figure = score_ic_graph(pred_label, show_notebook=False)[0]
+            print("IC分析图表... Done")
+            print("--- 可视化图表生成完毕 ---")
+
+
     eval_log = log_stream.buffer if isinstance(log_stream, StreamlitLogHandler) else log_stream.getvalue()
-    return {"signal": signal_report, "portfolio": portfolio_report}, eval_log
+    results = {
+        "signal": signal_report,
+        "portfolio": portfolio_report,
+        "report_figure": report_figure,
+        "ic_figure": ic_figure
+    }
+    return results, eval_log
