@@ -1,5 +1,6 @@
 from loguru import logger
 import os
+import logging
 from typing import Optional, List, Dict, Any
 import fire
 import pandas as pd
@@ -26,6 +27,8 @@ def check_instrument_data(
     problems = {"instrument": instrument, "missing_data": {}, "large_steps": [], "missing_columns": [], "missing_factor": None}
 
     try:
+        # Suppress qlib's INFO logs
+        logging.getLogger("qlib").setLevel(logging.WARNING)
         # Initialize qlib in each worker process
         qlib.init(provider_uri=qlib_dir)
         df = D.features([instrument], required_fields, freq=freq)
