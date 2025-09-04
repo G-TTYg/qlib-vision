@@ -354,8 +354,7 @@ def prediction_page():
             model_path = str(models_dir_path / model_name)
             info = get_model_info(model_path)
             stock_pool = info.get('stock_pool', '未知')
-            model_info_str += f"- **{model_name}**: 预测股票池 `{stock_pool}`
-"
+            model_info_str += f"- **{model_name}**: 预测股票池 `{stock_pool}`"
         st.info(model_info_str)
 
     prediction_date = st.date_input("选择预测日期", datetime.date.today() - datetime.timedelta(days=1))
