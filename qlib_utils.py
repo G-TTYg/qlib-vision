@@ -323,6 +323,32 @@ def get_historical_prediction(model_path_str: str, qlib_dir: str, stock_id: str,
 
     return pd.DataFrame(all_scores)
 
+def get_model_info(model_path_str: str):
+    """
+    Reads the YAML config file associated with a model and returns info.
+    """
+    info = {"stock_pool": "N/A", "error": None}
+    try:
+        model_path = Path(model_path_str)
+        config_path = model_path.with_suffix(".yaml")
+        if not config_path.exists():
+            raise FileNotFoundError(f"Config file not found at {config_path}")
+
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+
+        # Safely navigate the dictionary
+        stock_pool = config.get("dataset", {}).get("kwargs", {}).get("handler", {}).get("kwargs", {}).get("instruments")
+        if stock_pool:
+            info["stock_pool"] = stock_pool
+        else:
+            info["error"] = "Stock pool information not found in config."
+
+    except Exception as e:
+        info["error"] = str(e)
+
+    return info
+
 def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
     """
     Evaluate a trained model using qlib's standard analysis recorders.

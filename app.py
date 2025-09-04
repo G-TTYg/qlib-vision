@@ -8,7 +8,7 @@ from pathlib import Path
 from qlib_utils import (
     MODELS, FACTORS, train_model, predict, backtest_strategy,
     update_daily_data, check_data_health, get_data_summary, get_historical_prediction,
-    evaluate_model, load_settings, save_settings
+    evaluate_model, load_settings, save_settings, get_model_info
 )
 import pandas as pd
 import plotly.express as px
@@ -334,6 +334,17 @@ def prediction_page():
 
     st.subheader("1. 多模型对比预测 (单日)")
     selected_models = st.multiselect("选择一个或多个模型进行对比预测", available_models)
+
+    if selected_models:
+        model_info_str = ""
+        for model_name in selected_models:
+            model_path = str(models_dir_path / model_name)
+            info = get_model_info(model_path)
+            stock_pool = info.get('stock_pool', '未知')
+            model_info_str += f"- **{model_name}**: 预测股票池 `{stock_pool}`
+"
+        st.info(model_info_str)
+
     prediction_date = st.date_input("选择预测日期", datetime.date.today() - datetime.timedelta(days=1))
 
     if st.button("执行对比预测", key="btn_pred") and selected_models:
@@ -365,6 +376,13 @@ def prediction_page():
     st.subheader("2. 单一股票历史分数追踪")
     col1, col2 = st.columns(2)
     single_model_name = col1.selectbox("选择用于追踪的模型", available_models, key="single_model_select")
+
+    if single_model_name:
+        model_path = str(models_dir_path / single_model_name)
+        info = get_model_info(model_path)
+        stock_pool = info.get('stock_pool', '未知')
+        st.info(f"已选模型 **{single_model_name}** 在股票池 `{stock_pool}` 上进行训练。")
+
     stock_id_input = col2.text_input("输入股票代码 (例如 SH600519)", "SH600519")
     col3, col4 = st.columns(2)
     hist_start_date = col3.date_input("追踪开始日期", datetime.date.today() - datetime.timedelta(days=90))
