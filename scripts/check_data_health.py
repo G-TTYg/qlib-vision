@@ -113,7 +113,7 @@ class DataHealthChecker:
             n_jobs (int): Number of parallel jobs to run. -1 means use all available cores.
             limit_nums (Optional[int]): Limit the number of instruments to check for debugging.
         """
-        logger.info(f"Starting data health check with {n_jobs} parallel jobs...")
+        # logger.info(f"Starting data health check with {n_jobs} parallel jobs...")
 
         instruments = D.instruments(market="all")
         instrument_list = D.list_instruments(instruments=instruments, as_list=True, freq=self.freq)
@@ -134,14 +134,14 @@ class DataHealthChecker:
                 large_step_threshold_volume=self.large_step_threshold_volume,
                 missing_data_num=self.missing_data_num,
             )
-            for inst in instrument_list
+            for inst in tqdm(instrument_list, desc="Dispatching instrument checks")
         )
 
         self.summarize_results(results)
 
     def summarize_results(self, results: List[Dict[str, Any]]):
         """Aggregates and prints the problems found during the check."""
-        logger.info("Aggregating results...")
+        # logger.info("Aggregating results...")
 
         problems_found = False
         summary = {
@@ -204,6 +204,37 @@ class DataHealthChecker:
             logger.error("Encountered errors during checking:")
             print(pd.DataFrame(summary["errors"]).to_string(index=False))
             print("-" * 50)
+
+        # --- Final Summary ---
+        print("\n" + "=" * 50)
+        print(" Final Summary ".center(50, "="))
+        print("=" * 50)
+
+        if not problems_found:
+            logger.success("✅ Overall Status: All checks passed. No issues found.")
+        else:
+            logger.error("🔴 Overall Status: Issues found. See details in the report above.")
+
+            num_instruments_missing_data = len(set(d["instrument"] for d in summary["missing_data"]))
+            if num_instruments_missing_data > 0:
+                logger.warning(f"- Missing Data: Found in {num_instruments_missing_data} instrument(s).")
+
+            num_instruments_large_steps = len(set(d["instrument"] for d in summary["large_steps"]))
+            if num_instruments_large_steps > 0:
+                logger.warning(f"- Large Steps: Found in {num_instruments_large_steps} instrument(s).")
+
+            num_instruments_missing_cols = len(set(d["instrument"] for d in summary["missing_columns"]))
+            if num_instruments_missing_cols > 0:
+                logger.warning(f"- Missing Columns: Found in {num_instruments_missing_cols} instrument(s).")
+
+            num_instruments_missing_factor = len(set(d["instrument"] for d in summary["missing_factor"]))
+            if num_instruments_missing_factor > 0:
+                logger.warning(f"- Missing Factor: Found in {num_instruments_missing_factor} instrument(s).")
+
+            if summary["errors"]:
+                logger.error(f"- Errors: Encountered during checks for {len(summary['errors'])} instrument(s).")
+
+        print("=" * 50)
 
 
 if __name__ == "__main__":

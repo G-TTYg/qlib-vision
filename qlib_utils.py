@@ -19,7 +19,7 @@ class StreamlitLogHandler(io.StringIO):
     showing only the last N lines.
     """
 
-    def __init__(self, placeholder, max_lines=200):
+    def __init__(self, placeholder, max_lines=1000):
         super().__init__()
         self.placeholder = placeholder
         self.buffer = deque(maxlen=max_lines)
@@ -95,7 +95,7 @@ def get_script_path(script_name):
              raise FileNotFoundError(f"Script '{script_name}' not found. Please ensure the 'scripts' folder from the Qlib GitHub repository is in the same directory as the application.")
     return str(script_path)
 
-def run_command_with_log(command, placeholder, throttle_lines: int = 1, max_lines: int = 200):
+def run_command_with_log(command, placeholder, throttle_lines: int = 1, max_lines: int = 1000):
     """
     Runs a command and streams its output to a Streamlit placeholder in real-time,
     showing only the last N lines.
