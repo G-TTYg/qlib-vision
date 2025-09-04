@@ -1,4 +1,7 @@
 import streamlit as st
+import os
+# Suppress the GitPython warning
+os.environ['GIT_PYTHON_REFRESH'] = 'quiet'
 import qlib
 from qlib.constant import REG_CN
 from pathlib import Path
@@ -147,7 +150,7 @@ def model_training_page():
         elif "ALSTM" in model_name_key:
             st.info("ALSTM模型的超参数调节暂未在此界面支持。")
 
-    st.subheader("4. 开始训练")
+    st.subheader("4. 开始训练与日志")
     st.warning("""
     **重要：关于内存使用的说明**
 
@@ -160,9 +163,13 @@ def model_training_page():
     - **切换为小盘股**: `csi500`比`csi300`需要更多的内存。
     - **硬件升级**: 如果需要处理大规模数据，请在具有更大内存（RAM）的机器上运行。
     """)
+
+    log_placeholder = st.empty()
+
     if st.button("开始训练", key="btn_train"):
         st.session_state.training_status = None # Reset status on new run
-        st.session_state.training_log = "" # Clear previous logs
+        log_placeholder.empty() # Clear previous logs from the placeholder
+
         with st.spinner("正在训练模型，此过程可能需要较长时间，请耐心等待..."):
             try:
                 # --- Config modification for time ranges ---
@@ -200,14 +207,14 @@ def model_training_page():
                     config_with_dates, # Pass the modified config
                     custom_model_name if custom_model_name else None,
                     stock_pool,
-                    finetune_model_path
+                    finetune_model_path,
+                    log_placeholder=log_placeholder # Pass placeholder for real-time logging
                 )
                 st.session_state.training_status = {"status": "success", "message": f"模型训练成功！已保存至: {saved_path}"}
-                st.session_state.training_log = training_log
+                st.session_state.training_log = training_log # Save for persistence if needed
             except Exception as e:
                 st.session_state.training_status = {"status": "error", "message": f"训练过程中发生错误: {e}"}
-                st.session_state.training_log = st.session_state.get('training_log', '') + f"\n\nERROR: {e}"
-
+                # The log placeholder already contains the error details from the redirected stderr
 
     if st.session_state.training_status:
         status = st.session_state.training_status
@@ -216,10 +223,6 @@ def model_training_page():
             st.balloons()
         elif status["status"] == "error":
             st.error(status["message"])
-
-    if st.session_state.training_log:
-        st.subheader("训练日志")
-        st.code(st.session_state.training_log, language='log')
 
 def prediction_page():
     st.header("投资组合预测")
@@ -397,18 +400,23 @@ def model_evaluation_page():
 
     selected_model_name = st.selectbox("选择一个模型文件进行评估", available_models, key="eval_model_select")
 
+    st.subheader("评估日志")
+    log_placeholder = st.empty()
+
     if st.button("开始评估", key="btn_eval"):
         if not selected_model_name:
             st.warning("请选择一个模型。")
             st.session_state.eval_results = None
         else:
+            log_placeholder.empty() # Clear previous logs
             with st.spinner("正在执行评估，这可能需要几分钟时间..."):
                 try:
                     model_path = str(models_dir_path / selected_model_name)
-                    results = evaluate_model(model_path, qlib_dir)
+                    results = evaluate_model(model_path, qlib_dir, log_placeholder=log_placeholder)
                     st.session_state.eval_results = results
                 except Exception as e:
                     st.error(f"评估过程中发生错误: {e}")
+                    # The log placeholder already contains the error details
                     st.session_state.eval_results = None
 
     if st.session_state.eval_results:

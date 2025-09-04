@@ -11,6 +11,22 @@ import json
 import gc
 from contextlib import redirect_stdout, redirect_stderr
 
+class StreamlitLogHandler(io.StringIO):
+    """A handler to redirect stdout/stderr to a Streamlit placeholder."""
+    def __init__(self, placeholder):
+        super().__init__()
+        self.placeholder = placeholder
+        self.buffer = ""
+
+    def write(self, message):
+        self.buffer += message
+        # Use a monospace font that supports Chinese characters well
+        self.placeholder.code(self.buffer, language='log')
+
+    def flush(self):
+        # This method is called by some libraries, but we handle updates in write.
+        pass
+
 # --- Factor and Model Configurations ---
 HANDLER_ALPHA158 = { "class": "Alpha158", "module_path": "qlib.contrib.data.handler", "kwargs": { "start_time": "2014-01-01", "end_time": "2022-12-31", "fit_start_time": "2014-01-01", "fit_end_time": "2019-12-31", "instruments": "csi300", "drop_raw": True } }
 HANDLER_ALPHA360 = { "class": "Alpha360", "module_path": "qlib.contrib.data.handler", "kwargs": { "start_time": "2014-01-01", "end_time": "2022-12-31", "fit_start_time": "2014-01-01", "fit_end_time": "2019-12-31", "instruments": "csi300", "drop_raw": True } }
@@ -65,7 +81,7 @@ def check_data_health(qlib_dir, log_key):
 
 
 # --- Model Training & Evaluation Functions (FIXED) ---
-def train_model(model_name: str, qlib_dir: str, models_save_dir: str, custom_config: dict = None, custom_model_name: str = None, stock_pool: str = 'csi300', finetune_model_path: str = None):
+def train_model(model_name: str, qlib_dir: str, models_save_dir: str, custom_config: dict = None, custom_model_name: str = None, stock_pool: str = 'csi300', finetune_model_path: str = None, log_placeholder=None):
     import qlib
     from qlib.utils import init_instance_by_config
     from qlib.constant import REG_CN
@@ -83,10 +99,15 @@ def train_model(model_name: str, qlib_dir: str, models_save_dir: str, custom_con
 
     model = init_instance_by_config(model_config["task"]["model"])
 
-    log_stream = io.StringIO()
+    # Redirect stdout/stderr to the Streamlit placeholder if provided
+    log_stream = StreamlitLogHandler(log_placeholder) if log_placeholder else io.StringIO()
     with redirect_stdout(log_stream), redirect_stderr(log_stream):
+        print("--- 模型训练开始 ---")
         model.fit(dataset)
-    training_log = log_stream.getvalue()
+        print("--- 模型训练结束 ---")
+
+    training_log = log_stream.buffer if isinstance(log_stream, StreamlitLogHandler) else log_stream.getvalue()
+
 
     if custom_model_name:
         model_basename = custom_model_name
@@ -208,7 +229,7 @@ def get_historical_prediction(model_path_str: str, qlib_dir: str, stock_id: str,
 
     return pd.DataFrame(all_scores)
 
-def evaluate_model(model_path_str: str, qlib_dir: str):
+def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
     """
     Evaluate a trained model using qlib's standard analysis recorders.
     Returns a dictionary containing signal analysis and portfolio analysis results.
@@ -218,22 +239,33 @@ def evaluate_model(model_path_str: str, qlib_dir: str):
     from qlib.constant import REG_CN
     from qlib.workflow import R
     from qlib.workflow.record_temp import SignalRecord, PortAnaRecord, SigAnaRecord
-    qlib.auto_init(provider_uri=qlib_dir, region=REG_CN)
 
-    model_path = Path(model_path_str)
-    config_path = model_path.with_suffix(".yaml")
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config file {config_path} not found for model {model_path.name}")
-    with open(config_path, 'r') as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
+    log_stream = StreamlitLogHandler(log_placeholder) if log_placeholder else io.StringIO()
+    with redirect_stdout(log_stream), redirect_stderr(log_stream):
+        print("--- 模型评估开始 ---")
+        qlib.auto_init(provider_uri=qlib_dir, region=REG_CN)
 
-    with open(model_path, 'rb') as f:
-        model = pickle.load(f)
+        model_path = Path(model_path_str)
+        config_path = model_path.with_suffix(".yaml")
+        if not config_path.exists():
+            raise FileNotFoundError(f"Config file {config_path} not found for model {model_path.name}")
+        with open(config_path, 'r') as f:
+            config = yaml.load(f, Loader=yaml.FullLoader)
 
-    dataset = init_instance_by_config(config["dataset"])
+        with open(model_path, 'rb') as f:
+            model = pickle.load(f)
 
-    # The test period is defined in the model's config file
-    test_period = config["dataset"]["kwargs"]["segments"]["test"]
+        # For evaluation, we need the labels, which requires the raw data.
+        # Create a new dataset config here with `drop_raw=False` to ensure labels are generated for the test period.
+        # This is a temporary, in-memory change and does not affect the saved model configuration.
+        print("为保证评估顺利进行，临时创建`drop_raw=False`的数据集...")
+        eval_dataset_config = copy.deepcopy(config["dataset"])
+        eval_dataset_config["kwargs"]["handler"]["kwargs"]["drop_raw"] = False
+        dataset_for_eval = init_instance_by_config(eval_dataset_config)
+        print("数据集创建成功。")
+
+        # The test period is defined in the model's config file
+        test_period = config["dataset"]["kwargs"]["segments"]["test"]
 
     # Dynamically set benchmark
     instruments = config["dataset"]["kwargs"]["handler"]["kwargs"]["instruments"]
@@ -253,7 +285,7 @@ def evaluate_model(model_path_str: str, qlib_dir: str):
         "strategy": {
             "class": "TopkDropoutStrategy",
             "module_path": "qlib.contrib.strategy.signal_strategy",
-            "kwargs": { "signal": (model, dataset), "topk": 50, "n_drop": 5, },
+            "kwargs": { "signal": (model, dataset_for_eval), "topk": 50, "n_drop": 5, },
         },
         "backtest": {
             "start_time": test_period[0],
@@ -264,11 +296,12 @@ def evaluate_model(model_path_str: str, qlib_dir: str):
         },
     }
 
-    with R.start(experiment_name="model_evaluation", recorder_name="InMemoryRecorder", resume=True):
+    # Use a new experiment name to avoid conflicts from previous failed runs
+    with R.start(experiment_name="model_evaluation_streamlit", recorder_name="InMemoryRecorder", resume=True):
         recorder = R.get_recorder()
 
         # 1. Signal Analysis
-        sr = SignalRecord(model, dataset, recorder)
+        sr = SignalRecord(model, dataset_for_eval, recorder)
         sr.generate()
         sar = SigAnaRecord(recorder, ana_long_short=False)
         sar.generate()
