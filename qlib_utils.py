@@ -12,6 +12,7 @@ import gc
 from collections import deque
 from contextlib import redirect_stdout, redirect_stderr
 import multiprocessing
+from qlib.model.base import Model
 
 
 class StreamlitLogHandler(io.StringIO):
@@ -234,8 +235,7 @@ def train_model(
     dataset = init_instance_by_config(task_config["dataset"])
 
     if finetune_model_path:
-        with open(finetune_model_path, 'rb') as f:
-            initial_model = pickle.load(f)
+        initial_model = Model.load(finetune_model_path)
         model_config['kwargs']['init_model'] = initial_model
 
     model = init_instance_by_config(task_config["model"])
@@ -310,8 +310,7 @@ def predict(model_path_str: str, qlib_dir: str, prediction_date: str):
         raise FileNotFoundError(f"Config file {config_path} not found for model {model_path.name}")
     with open(config_path, 'r') as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
-    with open(model_path, 'rb') as f:
-        model = pickle.load(f)
+    model = Model.load(model_path)
     config["dataset"]["kwargs"]["handler"]["kwargs"]["start_time"] = pd.to_datetime(prediction_date) - pd.DateOffset(years=2)
     config["dataset"]["kwargs"]["handler"]["kwargs"]["end_time"] = prediction_date
     config["dataset"]["kwargs"]["segments"]["test"] = (prediction_date, prediction_date)
@@ -334,8 +333,7 @@ def backtest_strategy(model_path_str: str, qlib_dir: str, start_time: str, end_t
         raise FileNotFoundError(f"Config file {config_path} not found for model {model_path.name}")
     with open(config_path, 'r') as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
-    with open(model_path, 'rb') as f:
-        model = pickle.load(f)
+    model = Model.load(model_path)
     config["dataset"]["kwargs"]["handler"]["kwargs"]["start_time"] = start_time
     config["dataset"]["kwargs"]["handler"]["kwargs"]["end_time"] = end_time
     config["dataset"]["kwargs"]["segments"]["test"] = (start_time, end_time)
@@ -427,8 +425,7 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
         with open(config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
 
-        with open(model_path, "rb") as f:
-            model = pickle.load(f)
+        model = Model.load(model_path)
 
         print("为保证评估顺利进行，临时创建`drop_raw=False`的数据集...")
         eval_dataset_config = copy.deepcopy(config["dataset"])
