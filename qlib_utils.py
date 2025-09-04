@@ -27,21 +27,44 @@ class StreamlitLogHandler(io.StringIO):
         # This method is called by some libraries, but we handle updates in write.
         pass
 
-# --- Factor and Model Configurations ---
-HANDLER_ALPHA158 = { "class": "Alpha158", "module_path": "qlib.contrib.data.handler", "kwargs": { "start_time": "2014-01-01", "end_time": "2022-12-31", "fit_start_time": "2014-01-01", "fit_end_time": "2019-12-31", "instruments": "csi300", "drop_raw": True } }
-HANDLER_ALPHA360 = { "class": "Alpha360", "module_path": "qlib.contrib.data.handler", "kwargs": { "start_time": "2014-01-01", "end_time": "2022-12-31", "fit_start_time": "2014-01-01", "fit_end_time": "2019-12-31", "instruments": "csi300", "drop_raw": True } }
-DATASET_ALPHA158 = { "class": "DatasetH", "module_path": "qlib.data.dataset", "kwargs": { "handler": HANDLER_ALPHA158, "segments": { "train": ("2014-01-01", "2019-12-31"), "valid": ("2020-01-01", "2020-12-31"), "test": ("2021-01-01", "2022-12-31") } } }
-DATASET_ALPHA360 = { "class": "DatasetH", "module_path": "qlib.data.dataset", "kwargs": { "handler": HANDLER_ALPHA360, "segments": { "train": ("2014-01-01", "2019-12-31"), "valid": ("2020-01-01", "2020-12-31"), "test": ("2021-01-01", "2022-12-31") } } }
-LIGHTGBM_MODEL = { "class": "LGBModel", "module_path": "qlib.contrib.model.gbdt", "kwargs": { "loss": "mse", "colsample_bytree": 0.8879, "learning_rate": 0.0421, "subsample": 0.8789, "n_estimators": 200, "max_depth": 8 } }
-XGBOOST_MODEL = { "class": "XGBModel", "module_path": "qlib.contrib.model.xgboost", "kwargs": { "n_estimators": 200, "learning_rate": 0.05, "max_depth": 7 } }
-CATBOOST_MODEL = { "class": "CatBoostModel", "module_path": "qlib.contrib.model.catboost", "kwargs": { "iterations": 200, "learning_rate": 0.05, "depth": 7 } }
-ALSTM_MODEL = { "class": "ALSTM", "module_path": "qlib.contrib.model.pytorch_alstm_ts", "kwargs": { "d_feat": 6, "hidden_size": 64, "num_layers": 2, "dropout": 0.5, "n_epochs": 30, "lr": 1e-4, "early_stop": 5 } }
-SUPPORTED_MODELS = {
-    "LightGBM (Alpha158)": {"task": {"model": LIGHTGBM_MODEL, "dataset": DATASET_ALPHA158}},
-    "LightGBM (Alpha360)": {"task": {"model": LIGHTGBM_MODEL, "dataset": DATASET_ALPHA360}},
-    "XGBoost (Alpha158)": {"task": {"model": XGBOOST_MODEL, "dataset": DATASET_ALPHA158}},
-    "CatBoost (Alpha158)": {"task": {"model": CATBOOST_MODEL, "dataset": DATASET_ALPHA158}},
-    "ALSTM (Alpha158)": {"task": {"model": ALSTM_MODEL, "dataset": DATASET_ALPHA158}},
+# --- Decoupled Model and Factor Configurations ---
+
+MODELS = {
+    "LightGBM": {
+        "class": "LGBModel", "module_path": "qlib.contrib.model.gbdt",
+        "kwargs": {"loss": "mse", "colsample_bytree": 0.8879, "learning_rate": 0.0421, "subsample": 0.8789, "n_estimators": 200, "max_depth": 8}
+    },
+    "XGBoost": {
+        "class": "XGBModel", "module_path": "qlib.contrib.model.xgboost",
+        "kwargs": {"n_estimators": 200, "learning_rate": 0.05, "max_depth": 7}
+    },
+    "CatBoost": {
+        "class": "CatBoostModel", "module_path": "qlib.contrib.model.catboost",
+        "kwargs": {"iterations": 200, "learning_rate": 0.05, "depth": 7}
+    },
+    "ALSTM": {
+        "class": "ALSTM", "module_path": "qlib.contrib.model.pytorch_alstm_ts",
+        "kwargs": {"d_feat": 6, "hidden_size": 64, "num_layers": 2, "dropout": 0.5, "n_epochs": 30, "lr": 1e-4, "early_stop": 5}
+    }
+}
+
+FACTORS = {
+    "Alpha158": {
+        "class": "Alpha158", "module_path": "qlib.contrib.data.handler",
+        "kwargs": {"drop_raw": True} # Time and instruments are set dynamically
+    },
+    "Alpha360": {
+        "class": "Alpha360", "module_path": "qlib.contrib.data.handler",
+        "kwargs": {"drop_raw": True} # Time and instruments are set dynamically
+    }
+}
+
+BASE_DATASET = {
+    "class": "DatasetH", "module_path": "qlib.data.dataset",
+    "kwargs": {
+        "handler": {}, # To be filled dynamically
+        "segments": {} # To be filled dynamically
+    }
 }
 
 # --- Data Management Functions ---
@@ -81,23 +104,43 @@ def check_data_health(qlib_dir, log_key):
 
 
 # --- Model Training & Evaluation Functions (FIXED) ---
-def train_model(model_name: str, qlib_dir: str, models_save_dir: str, custom_config: dict = None, custom_model_name: str = None, stock_pool: str = 'csi300', finetune_model_path: str = None, log_placeholder=None):
+def train_model(
+    qlib_dir: str, models_save_dir: str,
+    model_name: str, factor_name: str, stock_pool: str,
+    segments: dict, model_params: dict = None,
+    custom_model_name: str = None, finetune_model_path: str = None, log_placeholder=None
+):
     import qlib
     from qlib.utils import init_instance_by_config
-    from qlib.constant import REG_CN
-    qlib.auto_init(provider_uri=qlib_dir, region=REG_CN)
+    qlib.auto_init(provider_uri=qlib_dir)
 
-    model_config = copy.deepcopy(custom_config if custom_config is not None else SUPPORTED_MODELS[model_name])
-    model_config["task"]["dataset"]["kwargs"]["handler"]["kwargs"]["instruments"] = stock_pool
-    dataset = init_instance_by_config(model_config["task"]["dataset"])
+    # --- Dynamically Build Config ---
+    model_config = copy.deepcopy(MODELS[model_name])
+    if model_params:
+        model_config["kwargs"].update(model_params)
 
-    model_kwargs = model_config["task"]["model"]["kwargs"]
+    handler_config = copy.deepcopy(FACTORS[factor_name])
+    handler_config["kwargs"]["start_time"] = segments["train"][0]
+    handler_config["kwargs"]["end_time"] = segments["test"][1]
+    handler_config["kwargs"]["fit_start_time"] = segments["train"][0]
+    handler_config["kwargs"]["fit_end_time"] = segments["train"][1]
+    handler_config["kwargs"]["instruments"] = stock_pool
+
+    dataset_config = copy.deepcopy(BASE_DATASET)
+    dataset_config["kwargs"]["handler"] = handler_config
+    dataset_config["kwargs"]["segments"] = segments
+
+    task_config = {"model": model_config, "dataset": dataset_config}
+    # --- End of Config Build ---
+
+    dataset = init_instance_by_config(task_config["dataset"])
+
     if finetune_model_path:
         with open(finetune_model_path, 'rb') as f:
             initial_model = pickle.load(f)
-        model_kwargs['init_model'] = initial_model
+        model_config['kwargs']['init_model'] = initial_model
 
-    model = init_instance_by_config(model_config["task"]["model"])
+    model = init_instance_by_config(task_config["model"])
 
     # Redirect stdout/stderr to the Streamlit placeholder if provided
     log_stream = StreamlitLogHandler(log_placeholder) if log_placeholder else io.StringIO()
@@ -108,25 +151,20 @@ def train_model(model_name: str, qlib_dir: str, models_save_dir: str, custom_con
 
     training_log = log_stream.buffer if isinstance(log_stream, StreamlitLogHandler) else log_stream.getvalue()
 
-
     if custom_model_name:
         model_basename = custom_model_name
     else:
-        base_name = model_name.replace(' ', '_').replace('(', '').replace(')', '')
-        try:
-            train_end_date = model_config['task']['dataset']['kwargs']['segments']['train'][1]
-            model_basename = f"{base_name}_{train_end_date}"
-        except (KeyError, IndexError):
-            model_basename = base_name # Fallback in case the date is not available
+        train_end_date = segments['train'][1]
+        model_basename = f"{model_name}_{factor_name}_{stock_pool}_{train_end_date}"
 
     model_save_path = Path(models_save_dir).expanduser() / f"{model_basename}.pkl"
     config_save_path = Path(models_save_dir).expanduser() / f"{model_basename}.yaml"
     model_save_path.parent.mkdir(parents=True, exist_ok=True)
 
-    model_config["task"]["model"]["kwargs"].pop('init_model', None)
+    task_config["model"]["kwargs"].pop('init_model', None)
 
     with open(model_save_path, 'wb') as f: pickle.dump(model, f)
-    with open(config_save_path, 'w') as f: yaml.dump(model_config["task"], f)
+    with open(config_save_path, 'w') as f: yaml.dump(task_config, f)
 
     # --- Memory Cleanup ---
     # Explicitly delete large objects and run garbage collection
@@ -166,8 +204,7 @@ def load_settings() -> dict:
 def predict(model_path_str: str, qlib_dir: str, prediction_date: str):
     import qlib
     from qlib.utils import init_instance_by_config
-    from qlib.constant import REG_CN
-    qlib.auto_init(provider_uri=qlib_dir, region=REG_CN)
+    qlib.auto_init(provider_uri=qlib_dir)
 
     model_path = Path(model_path_str)
     config_path = model_path.with_suffix(".yaml")
@@ -189,10 +226,9 @@ def predict(model_path_str: str, qlib_dir: str, prediction_date: str):
 def backtest_strategy(model_path_str: str, qlib_dir: str, start_time: str, end_time: str, strategy_kwargs: dict, exchange_kwargs: dict):
     import qlib
     from qlib.utils import init_instance_by_config
-    from qlib.constant import REG_CN
     from qlib.contrib.strategy import TopkDropoutStrategy
     from qlib.contrib.evaluate import backtest_daily
-    qlib.auto_init(provider_uri=qlib_dir, region=REG_CN)
+    qlib.auto_init(provider_uri=qlib_dir)
 
     model_path = Path(model_path_str)
     config_path = model_path.with_suffix(".yaml")
@@ -236,14 +272,13 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
     """
     import qlib
     from qlib.utils import init_instance_by_config
-    from qlib.constant import REG_CN
     from qlib.workflow import R
     from qlib.workflow.record_temp import SignalRecord, PortAnaRecord, SigAnaRecord
 
     log_stream = StreamlitLogHandler(log_placeholder) if log_placeholder else io.StringIO()
     with redirect_stdout(log_stream), redirect_stderr(log_stream):
         print("--- 模型评估开始 ---")
-        qlib.auto_init(provider_uri=qlib_dir, region=REG_CN)
+        qlib.auto_init(provider_uri=qlib_dir)
 
         model_path = Path(model_path_str)
         config_path = model_path.with_suffix(".yaml")

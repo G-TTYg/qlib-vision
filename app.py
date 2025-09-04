@@ -6,7 +6,7 @@ import qlib
 from qlib.constant import REG_CN
 from pathlib import Path
 from qlib_utils import (
-    SUPPORTED_MODELS, train_model, predict, backtest_strategy,
+    MODELS, FACTORS, train_model, predict, backtest_strategy,
     update_daily_data, check_data_health, get_historical_prediction,
     evaluate_model, load_settings, save_settings
 )
@@ -115,11 +115,14 @@ def model_training_page():
         else:
             st.warning(f"在 '{finetune_dir_path}' 中未找到任何 .pkl 模型文件。")
             return
+
     col1, col2 = st.columns(2)
-    model_name_key = col1.selectbox("选择模型和因子", list(SUPPORTED_MODELS.keys()))
-    stock_pool = col2.selectbox("选择股票池", ["csi300", "csi500"], index=0)
+    model_name = col1.selectbox("选择模型", list(MODELS.keys()))
+    factor_name = col2.selectbox("选择因子", list(FACTORS.keys()))
+
+    stock_pool = st.text_input("输入股票池名称 (例如 csi300)", "csi300", help="请输入Qlib数据中存在的股票池名称。例如: csi300, csi500。")
     custom_model_name = st.text_input("为新模型命名 (可选, 留空则使用默认名)")
-    if "ALSTM" in model_name_key:
+    if "ALSTM" in model_name:
         st.warning("️️️**注意：** ALSTM是深度学习模型，训练时间非常长，对电脑性能要求很高。")
 
     st.subheader("2. 数据段与时间范围")
@@ -136,18 +139,17 @@ def model_training_page():
 
 
     st.subheader("3. 超参数调节")
-    config = copy.deepcopy(SUPPORTED_MODELS[model_name_key])
-    params = config['task']['model']['kwargs']
+    params = copy.deepcopy(MODELS[model_name]["kwargs"])
     with st.expander("调节模型参数", expanded=True):
-        if any(m in model_name_key for m in ["LightGBM", "XGBoost", "CatBoost"]):
-            if "CatBoost" in model_name_key:
-                params['iterations'] = st.slider("迭代次数", 50, 500, params.get('iterations', 200), 10, key=f"it_{model_name_key}")
-                params['depth'] = st.slider("最大深度", 3, 15, params.get('depth', 7), key=f"depth_{model_name_key}")
+        if any(m in model_name for m in ["LightGBM", "XGBoost", "CatBoost"]):
+            if "CatBoost" in model_name:
+                params['iterations'] = st.slider("迭代次数", 50, 500, params.get('iterations', 200), 10, key=f"it_{model_name}")
+                params['depth'] = st.slider("最大深度", 3, 15, params.get('depth', 7), key=f"depth_{model_name}")
             else:
-                params['n_estimators'] = st.slider("树的数量", 50, 500, params.get('n_estimators', 200), 10, key=f"n_est_{model_name_key}")
-                params['max_depth'] = st.slider("最大深度", 3, 15, params.get('max_depth', 7), key=f"depth_{model_name_key}")
-            params['learning_rate'] = st.slider("学习率", 0.01, 0.2, params.get('learning_rate', 0.05), 0.01, key=f"lr_{model_name_key}")
-        elif "ALSTM" in model_name_key:
+                params['n_estimators'] = st.slider("树的数量", 50, 500, params.get('n_estimators', 200), 10, key=f"n_est_{model_name}")
+                params['max_depth'] = st.slider("最大深度", 3, 15, params.get('max_depth', 7), key=f"depth_{model_name}")
+            params['learning_rate'] = st.slider("学习率", 0.01, 0.2, params.get('learning_rate', 0.05), 0.01, key=f"lr_{model_name}")
+        elif "ALSTM" in model_name:
             st.info("ALSTM模型的超参数调节暂未在此界面支持。")
 
     st.subheader("4. 开始训练与日志")
@@ -180,35 +182,30 @@ def model_training_page():
                     st.error("日期区间设置错误：必须遵循 训练 < 验证 < 测试 的顺序，且开始日期不能晚于结束日期。")
                     raise ValueError("日期顺序不正确。")
 
-                config_with_dates = copy.deepcopy(config)
-
-                # Format dates to string
+                # Build segments and params for new train_model signature
                 train_start_str, train_end_str = train_start.strftime("%Y-%m-%d"), train_end.strftime("%Y-%m-%d")
                 valid_start_str, valid_end_str = valid_start.strftime("%Y-%m-%d"), valid_end.strftime("%Y-%m-%d")
                 test_start_str, test_end_str = test_start.strftime("%Y-%m-%d"), test_end.strftime("%Y-%m-%d")
 
-                # Update handler
-                handler_kwargs = config_with_dates['task']['dataset']['kwargs']['handler']['kwargs']
-                handler_kwargs['start_time'] = train_start_str
-                handler_kwargs['end_time'] = test_end_str
-                handler_kwargs['fit_start_time'] = train_start_str
-                handler_kwargs['fit_end_time'] = train_end_str
+                segments = {
+                    "train": (train_start_str, train_end_str),
+                    "valid": (valid_start_str, valid_end_str),
+                    "test": (test_start_str, test_end_str)
+                }
 
-                # Update dataset segments
-                dataset_segments = config_with_dates['task']['dataset']['kwargs']['segments']
-                dataset_segments['train'] = (train_start_str, train_end_str)
-                dataset_segments['valid'] = (valid_start_str, valid_end_str)
-                dataset_segments['test'] = (test_start_str, test_end_str)
+                model_params = params # `params` is already updated by the sliders
 
                 saved_path, training_log = train_model(
-                    model_name_key,
-                    qlib_dir,
-                    models_save_dir,
-                    config_with_dates, # Pass the modified config
-                    custom_model_name if custom_model_name else None,
-                    stock_pool,
-                    finetune_model_path,
-                    log_placeholder=log_placeholder # Pass placeholder for real-time logging
+                    qlib_dir=qlib_dir,
+                    models_save_dir=models_save_dir,
+                    model_name=model_name,
+                    factor_name=factor_name,
+                    stock_pool=stock_pool,
+                    segments=segments,
+                    model_params=model_params,
+                    custom_model_name=custom_model_name if custom_model_name else None,
+                    finetune_model_path=finetune_model_path,
+                    log_placeholder=log_placeholder
                 )
                 st.session_state.training_status = {"status": "success", "message": f"模型训练成功！已保存至: {saved_path}"}
                 st.session_state.training_log = training_log # Save for persistence if needed
