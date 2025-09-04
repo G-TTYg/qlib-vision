@@ -63,25 +63,13 @@ def check_data_health(qlib_dir, log_key):
     command = f'"{sys.executable}" "{script_path}" check_data --qlib_dir "{qlib_dir}"'
     run_command_with_log(command, log_key)
 
-# --- Qlib Initialization ---
-def initialize_qlib(provider_uri: str):
-    """Initializes Qlib with the given provider URI."""
-    import qlib
-    from qlib.constant import REG_CN
-    from qlib.utils import exists_qlib_data
-
-    provider_uri = str(Path(provider_uri).expanduser())
-    if not exists_qlib_data(provider_uri):
-        raise FileNotFoundError(
-            f"Qlib data not found at '{provider_uri}'. "
-            f"Please check the path in the sidebar and ensure you have run the data download command."
-        )
-    qlib.init(provider_uri=provider_uri, region=REG_CN)
-
 
 # --- Model Training & Evaluation Functions (FIXED) ---
 def train_model(model_name: str, qlib_dir: str, models_save_dir: str, custom_config: dict = None, custom_model_name: str = None, stock_pool: str = 'csi300', finetune_model_path: str = None):
+    import qlib
     from qlib.utils import init_instance_by_config
+    from qlib.constant import REG_CN
+    qlib.init(provider_uri=qlib_dir, region=REG_CN)
 
     model_config = copy.deepcopy(custom_config if custom_config is not None else SUPPORTED_MODELS[model_name])
     model_config["task"]["dataset"]["kwargs"]["handler"]["kwargs"]["instruments"] = stock_pool
@@ -155,7 +143,10 @@ def load_settings() -> dict:
     return {}
 
 def predict(model_path_str: str, qlib_dir: str, prediction_date: str):
+    import qlib
     from qlib.utils import init_instance_by_config
+    from qlib.constant import REG_CN
+    qlib.init(provider_uri=qlib_dir, region=REG_CN)
 
     model_path = Path(model_path_str)
     config_path = model_path.with_suffix(".yaml")
@@ -175,9 +166,12 @@ def predict(model_path_str: str, qlib_dir: str, prediction_date: str):
     return prediction.sort_values(by="score", ascending=False)
 
 def backtest_strategy(model_path_str: str, qlib_dir: str, start_time: str, end_time: str, strategy_kwargs: dict, exchange_kwargs: dict):
+    import qlib
     from qlib.utils import init_instance_by_config
+    from qlib.constant import REG_CN
     from qlib.contrib.strategy import TopkDropoutStrategy
     from qlib.contrib.evaluate import backtest_daily
+    qlib.init(provider_uri=qlib_dir, region=REG_CN)
 
     model_path = Path(model_path_str)
     config_path = model_path.with_suffix(".yaml")
@@ -219,9 +213,12 @@ def evaluate_model(model_path_str: str, qlib_dir: str):
     Evaluate a trained model using qlib's standard analysis recorders.
     Returns a dictionary containing signal analysis and portfolio analysis results.
     """
+    import qlib
     from qlib.utils import init_instance_by_config
+    from qlib.constant import REG_CN
     from qlib.workflow import R
     from qlib.workflow.record_temp import SignalRecord, PortAnaRecord, SigAnaRecord
+    qlib.init(provider_uri=qlib_dir, region=REG_CN)
 
     model_path = Path(model_path_str)
     config_path = model_path.with_suffix(".yaml")

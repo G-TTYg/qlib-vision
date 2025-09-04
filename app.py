@@ -5,7 +5,7 @@ from pathlib import Path
 from qlib_utils import (
     SUPPORTED_MODELS, train_model, predict, backtest_strategy,
     update_daily_data, check_data_health, get_historical_prediction,
-    evaluate_model, load_settings, save_settings, initialize_qlib
+    evaluate_model, load_settings, save_settings
 )
 import pandas as pd
 import plotly.express as px
@@ -438,24 +438,6 @@ def main():
     # --- Settings Initialization ---
     if 'settings' not in st.session_state:
         st.session_state.settings = load_settings()
-
-    # --- Qlib Initialization ---
-    if 'qlib_initialized' not in st.session_state:
-        st.session_state.qlib_initialized = False
-
-    try:
-        if not st.session_state.qlib_initialized:
-            # Only initialize if the path is not the default, uninitialized one.
-            qlib_data_path = st.session_state.settings.get("qlib_data_path")
-            if qlib_data_path:
-                initialize_qlib(qlib_data_path)
-                st.session_state.qlib_initialized = True
-                st.sidebar.success("Qlib 已初始化成功！")
-    except FileNotFoundError as e:
-        st.sidebar.error(f"Qlib 初始化失败: {e}")
-    except Exception as e:
-        st.sidebar.error(f"Qlib 初始化时发生未知错误: {e}")
-
 
     st.sidebar.image("https://avatars.githubusercontent.com/u/65423353?s=200&v=4", width=100)
     st.sidebar.title("Qlib 可视化面板")
