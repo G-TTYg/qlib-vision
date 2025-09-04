@@ -9,23 +9,41 @@ import copy
 import io
 import json
 import gc
+from collections import deque
 from contextlib import redirect_stdout, redirect_stderr
 
+
 class StreamlitLogHandler(io.StringIO):
-    """A handler to redirect stdout/stderr to a Streamlit placeholder."""
-    def __init__(self, placeholder):
+    """
+    A handler to redirect stdout/stderr to a Streamlit placeholder,
+    showing only the last N lines.
+    """
+
+    def __init__(self, placeholder, max_lines=200):
         super().__init__()
         self.placeholder = placeholder
-        self.buffer = ""
+        self.buffer = deque(maxlen=max_lines)
+        self.partial_line = ""
 
     def write(self, message):
-        self.buffer += message
-        # Use a monospace font that supports Chinese characters well
-        self.placeholder.code(self.buffer, language='log')
+        # Add new data to the partial line
+        self.partial_line += message
+        # Split into complete lines
+        lines = self.partial_line.split("\n")
+        # The last element is the new partial line
+        self.partial_line = lines.pop()
+        # Add complete lines to the buffer
+        for line in lines:
+            self.buffer.append(line)
+
+        # Update the display
+        log_content = "\n".join(self.buffer)
+        if self.partial_line:
+            log_content += "\n" + self.partial_line
+        self.placeholder.code(log_content, language="log")
 
     def flush(self):
-        # This method is called by some libraries, but we handle updates in write.
-        pass
+        pass  # Not needed for real-time updates
 
 # --- Decoupled Model and Factor Configurations ---
 
@@ -77,35 +95,35 @@ def get_script_path(script_name):
              raise FileNotFoundError(f"Script '{script_name}' not found. Please ensure the 'scripts' folder from the Qlib GitHub repository is in the same directory as the application.")
     return str(script_path)
 
-def run_command_with_log(command, placeholder, throttle_lines: int = 1):
+def run_command_with_log(command, placeholder, throttle_lines: int = 1, max_lines: int = 200):
     """
-    Runs a command and streams its output to a Streamlit placeholder in real-time.
-    Includes optional throttling to prevent UI freezes with rapid output.
+    Runs a command and streams its output to a Streamlit placeholder in real-time,
+    showing only the last N lines.
     """
-    buffer = f"Running command: {command}\n\n"
-    placeholder.code(buffer, language='log')
+    buffer = deque(maxlen=max_lines)
+    buffer.append(f"Running command: {command}\n\n")
+    placeholder.code("".join(buffer), language="log")
 
     process = subprocess.Popen(
-        command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, encoding='utf-8', errors='replace'
+        command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace"
     )
 
     line_count = 0
-    for line in iter(process.stdout.readline, ''):
-        buffer += line
+    for line in iter(process.stdout.readline, ""):
+        buffer.append(line)
         line_count += 1
         # Update the UI every `throttle_lines` to prevent freezing
         if line_count % throttle_lines == 0:
-            placeholder.code(buffer, language='log')
+            placeholder.code("".join(buffer), language="log")
 
     # Ensure the final, complete log is always displayed regardless of throttling
-    placeholder.code(buffer, language='log')
+    final_log = "".join(buffer)
+    placeholder.code(final_log, language="log")
 
     process.stdout.close()
 
     if process.wait() != 0:
-        error_output = buffer
-        raise subprocess.CalledProcessError(process.returncode, command, output=error_output)
+        raise subprocess.CalledProcessError(process.returncode, command, output=final_log)
 
 def update_daily_data(qlib_dir, start_date, end_date, placeholder):
     script_path = get_script_path("collector.py")
@@ -352,8 +370,8 @@ def get_model_info(model_path_str: str):
         if not config_path.exists():
             raise FileNotFoundError(f"Config file not found at {config_path}")
 
-        with open(config_path, 'r') as f:
-            config = yaml.safe_load(f)
+        with open(config_path, "r") as f:
+            config = yaml.load(f, Loader=yaml.FullLoader)
 
         # Safely navigate the dictionary
         stock_pool = config.get("dataset", {}).get("kwargs", {}).get("handler", {}).get("kwargs", {}).get("instruments")
@@ -366,6 +384,7 @@ def get_model_info(model_path_str: str):
         info["error"] = str(e)
 
     return info
+
 
 def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
     """
@@ -387,7 +406,7 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
         if not config_path.exists():
             raise FileNotFoundError(f"Config file {config_path} not found for model {model_path.name}")
         with open(config_path, "r") as f:
-            config = yaml.safe_load(f)
+            config = yaml.load(f, Loader=yaml.FullLoader)
 
         with open(model_path, "rb") as f:
             model = pickle.load(f)
