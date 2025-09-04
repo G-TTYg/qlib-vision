@@ -400,21 +400,29 @@ def prediction_page():
                     pred_df = pred_df.rename(columns={"score": f"score_{model_name.replace('.pkl', '')}"})
                     all_preds.append(pred_df.set_index('StockID')[f"score_{model_name.replace('.pkl', '')}"])
                 combined_df = pd.concat(all_preds, axis=1).reset_index()
-                score_cols = [col for col in combined_df.columns if 'score' in col]
-                combined_df['average_score'] = combined_df[score_cols].mean(axis=1)
-                top_10_stocks = combined_df.nlargest(10, 'average_score')
-                plot_df = top_10_stocks.melt(id_vars=['StockID'], value_vars=score_cols, var_name='Model', value_name='Score')
-                plot_df['Model'] = plot_df['Model'].str.replace('score_', '')
-                fig = px.bar(plot_df, x="StockID", y="Score", color="Model", barmode='group', title="Top-10 股票多模型分数对比")
-                st.session_state.pred_results = {"df": combined_df, "fig": fig}
+
+                if combined_df.empty:
+                    st.session_state.pred_results = {"status": "empty"}
+                else:
+                    score_cols = [col for col in combined_df.columns if 'score' in col]
+                    combined_df['average_score'] = combined_df[score_cols].mean(axis=1)
+                    top_10_stocks = combined_df.nlargest(10, 'average_score')
+                    plot_df = top_10_stocks.melt(id_vars=['StockID'], value_vars=score_cols, var_name='Model', value_name='Score')
+                    plot_df['Model'] = plot_df['Model'].str.replace('score_', '')
+                    fig = px.bar(plot_df, x="StockID", y="Score", color="Model", barmode='group', title="Top-10 股票多模型分数对比")
+                    st.session_state.pred_results = {"df": combined_df, "fig": fig, "status": "ok"}
+
             except Exception as e:
                 st.error(f"预测过程中发生错误: {e}")
                 st.session_state.pred_results = None
 
     if st.session_state.pred_results:
-        st.success("预测完成！")
-        st.dataframe(st.session_state.pred_results["df"])
-        st.plotly_chart(st.session_state.pred_results["fig"], use_container_width=True)
+        if st.session_state.pred_results.get("status") == "ok":
+            st.success("预测完成！")
+            st.dataframe(st.session_state.pred_results["df"])
+            st.plotly_chart(st.session_state.pred_results["fig"], use_container_width=True)
+        elif st.session_state.pred_results.get("status") == "empty":
+            st.warning("预测结果为空。可能原因：您选择的日期是非交易日、数据缺失、或所选股票池当天全部停牌。")
 
     st.subheader("2. 单一股票历史分数追踪")
     col1, col2 = st.columns(2)

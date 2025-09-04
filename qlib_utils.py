@@ -433,7 +433,7 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
         dataset_for_eval = init_instance_by_config(eval_dataset_config)
         print("数据集创建成功。")
 
-        with R.start(experiment_name="model_evaluation_streamlit", recorder_name="InMemoryRecorder", resume=True):
+        with R.start(experiment_name="model_evaluation_streamlit", recorder_name="InMemoryRecorder", resume=False):
             recorder = R.get_recorder()
 
             # 1. Generate prediction and run Signal Analysis
