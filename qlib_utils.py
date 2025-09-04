@@ -69,7 +69,7 @@ def train_model(model_name: str, qlib_dir: str, models_save_dir: str, custom_con
     import qlib
     from qlib.utils import init_instance_by_config
     from qlib.constant import REG_CN
-    qlib.init(provider_uri=qlib_dir, region=REG_CN)
+    qlib.auto_init(provider_uri=qlib_dir, region=REG_CN)
 
     model_config = copy.deepcopy(custom_config if custom_config is not None else SUPPORTED_MODELS[model_name])
     model_config["task"]["dataset"]["kwargs"]["handler"]["kwargs"]["instruments"] = stock_pool
@@ -146,7 +146,7 @@ def predict(model_path_str: str, qlib_dir: str, prediction_date: str):
     import qlib
     from qlib.utils import init_instance_by_config
     from qlib.constant import REG_CN
-    qlib.init(provider_uri=qlib_dir, region=REG_CN)
+    qlib.auto_init(provider_uri=qlib_dir, region=REG_CN)
 
     model_path = Path(model_path_str)
     config_path = model_path.with_suffix(".yaml")
@@ -171,7 +171,7 @@ def backtest_strategy(model_path_str: str, qlib_dir: str, start_time: str, end_t
     from qlib.constant import REG_CN
     from qlib.contrib.strategy import TopkDropoutStrategy
     from qlib.contrib.evaluate import backtest_daily
-    qlib.init(provider_uri=qlib_dir, region=REG_CN)
+    qlib.auto_init(provider_uri=qlib_dir, region=REG_CN)
 
     model_path = Path(model_path_str)
     config_path = model_path.with_suffix(".yaml")
@@ -218,7 +218,7 @@ def evaluate_model(model_path_str: str, qlib_dir: str):
     from qlib.constant import REG_CN
     from qlib.workflow import R
     from qlib.workflow.record_temp import SignalRecord, PortAnaRecord, SigAnaRecord
-    qlib.init(provider_uri=qlib_dir, region=REG_CN)
+    qlib.auto_init(provider_uri=qlib_dir, region=REG_CN)
 
     model_path = Path(model_path_str)
     config_path = model_path.with_suffix(".yaml")
