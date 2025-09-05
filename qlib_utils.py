@@ -423,7 +423,7 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
         if not config_path.exists():
             raise FileNotFoundError(f"Config file {config_path} not found for model {model_path.name}")
         with open(config_path, "r") as f:
-            config = yaml.safe_load(f)
+            config = yaml.load(f, Loader=yaml.FullLoader)
 
         model = Model.load(model_path)
         dataset = init_instance_by_config(config["dataset"])
@@ -486,3 +486,42 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
     gc.collect()
 
     return results, eval_log
+
+def get_position_analysis(model_path_str: str, qlib_dir: str, start_time: str, end_time: str, strategy_kwargs: dict, exchange_kwargs: dict):
+    """
+    Runs a backtest and returns the detailed position information along with the performance report.
+    """
+    import qlib
+    from qlib.utils import init_instance_by_config
+    from qlib.contrib.strategy import TopkDropoutStrategy
+    from qlib.contrib.evaluate import backtest_daily
+
+    qlib.auto_init(provider_uri=qlib_dir)
+
+    # Load model and config
+    model_path = Path(model_path_str)
+    config_path = model_path.with_suffix(".yaml")
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file {config_path} not found for model {model_path.name}")
+    with open(config_path, 'r') as f:
+        config = yaml.load(f, Loader=yaml.FullLoader)
+    model = Model.load(model_path)
+
+    # Prepare dataset for the backtest period
+    config["dataset"]["kwargs"]["handler"]["kwargs"]["start_time"] = start_time
+    config["dataset"]["kwargs"]["handler"]["kwargs"]["end_time"] = end_time
+    config["dataset"]["kwargs"]["segments"] = {"test": (start_time, end_time)}
+    dataset = init_instance_by_config(config["dataset"])
+
+    # Instantiate strategy
+    strategy = TopkDropoutStrategy(model=model, dataset=dataset, **strategy_kwargs)
+
+    # Run backtest and capture both report and positions
+    report_df, positions_df = backtest_daily(
+        start_time=start_time,
+        end_time=end_time,
+        strategy=strategy,
+        exchange_kwargs=exchange_kwargs
+    )
+
+    return report_df, positions_df

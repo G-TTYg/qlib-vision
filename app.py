@@ -8,7 +8,7 @@ from pathlib import Path
 from qlib_utils import (
     MODELS, FACTORS, train_model, predict, backtest_strategy,
     update_daily_data, check_data_health, get_data_summary, get_historical_prediction,
-    evaluate_model, load_settings, save_settings, get_model_info
+    evaluate_model, load_settings, save_settings, get_model_info, get_position_analysis
 )
 import pandas as pd
 import plotly.express as px
@@ -674,6 +674,92 @@ def model_evaluation_page():
                 with st.expander("查看每日收益和换手率的原始数据"):
                     st.dataframe(raw_report_df)
 
+def position_analysis_page():
+    st.header("策略仓位分析")
+    with st.expander("💡 操作指南 (Operation Guide)"):
+        st.markdown("""
+        **本页面旨在提供对策略在回测期间每日持仓的深入洞察。**
+        **- 核心作用:**
+          - **持仓透明化**: 查看在回测的任何一天，策略具体持有哪些股票。
+          - **风险暴露分析**: 直观地了解策略的集中度。
+        **- 操作流程:**
+          1. **选择模型和配置**: 选择模型、回测时间段和策略参数。
+          2. **开始分析**: 点击按钮，后台将运行回测以生成每日持仓记录。
+          3. **查看数据**: 页面会显示整体的策略表现和详细的每日持仓数据表。
+        """)
+
+    # Initialize session state
+    if "pa_results" not in st.session_state:
+        st.session_state.pa_results = None
+
+    # --- Setup ---
+    qlib_dir = st.session_state.settings.get("qlib_data_path", str(Path.home() / ".qlib" / "qlib_data" / "cn_data"))
+    models_dir = st.session_state.settings.get("models_path", str(Path.home() / "qlib_models"))
+    st.info(f"当前模型加载路径: `{models_dir}` (可在左侧边栏修改)")
+    models_dir_path = Path(models_dir).expanduser()
+    available_models = [f.name for f in models_dir_path.glob("*.pkl")] if models_dir_path.exists() else []
+    if not available_models:
+        st.warning(f"在 '{models_dir_path}' 中未找到模型。")
+        return
+
+    # --- UI Controls ---
+    selected_model_name = st.selectbox("选择一个模型文件进行分析", available_models, key="pa_model_select")
+    selected_model_path = str(models_dir_path / selected_model_name)
+
+    st.subheader("分析参数配置")
+    col1, col2 = st.columns(2)
+    start_date = col1.date_input("开始日期", datetime.date.today() - datetime.timedelta(days=90), key="pa_start")
+    end_date = col2.date_input("结束日期", datetime.date.today() - datetime.timedelta(days=1), key="pa_end")
+
+    st.subheader("策略参数 (Top-K Dropout)")
+    c1, c2 = st.columns(2)
+    topk = c1.number_input("买入Top-K只股票", 1, 100, 30, key="pa_topk")
+    n_drop = c2.number_input("持有期(天)", 1, 20, 5, key="pa_ndrop")
+
+    exchange_kwargs = {"open_cost": 0.0005, "close_cost": 0.0015, "min_cost": 5, "deal_price": "close"}
+
+
+    if st.button("开始分析", key="btn_pa_run"):
+        if start_date >= end_date:
+            st.error("开始日期必须早于结束日期！")
+            st.session_state.pa_results = None
+        else:
+            strategy_kwargs = {"topk": topk, "n_drop": n_drop}
+            with st.spinner("正在运行回测以生成仓位数据..."):
+                try:
+                    report_df, positions_df = get_position_analysis(
+                        selected_model_path, qlib_dir,
+                        start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"),
+                        strategy_kwargs, exchange_kwargs
+                    )
+                    st.session_state.pa_results = {"report": report_df, "positions": positions_df}
+                except Exception as e:
+                    st.error(f"分析过程中发生错误: {e}")
+                    st.session_state.pa_results = None
+
+    # --- Display Results ---
+    if st.session_state.pa_results:
+        st.success("仓位数据分析完成！")
+
+        report_df = st.session_state.pa_results["report"]
+        positions_df = st.session_state.pa_results["positions"]
+
+        st.subheader("整体策略表现")
+        from qlib.contrib.evaluate import risk_analysis
+        analysis = risk_analysis(report_df["return"] - report_df["bench"] - report_df["cost"])
+
+        kpi_cols = st.columns(4)
+        kpi_cols[0].metric("年化收益率", f"{analysis['annualized_return']:.2%}")
+        kpi_cols[1].metric("信息比率", f"{analysis['information_ratio']:.2f}")
+        kpi_cols[2].metric("最大回撤", f"{analysis['max_drawdown']:.2%}")
+        kpi_cols[3].metric("平均换手率", f"{report_df['turnover'].mean():.3f}")
+
+        st.subheader("每日持仓数据")
+        if positions_df.empty:
+            st.warning("未能获取任何持仓数据。")
+        else:
+            st.dataframe(positions_df)
+
 def main():
     st.set_page_config(layout="wide", page_title="Qlib 可视化工具")
 
@@ -685,7 +771,7 @@ def main():
     st.sidebar.title("Qlib 可视化面板")
 
     # --- Page Selection ---
-    page_options = ["数据管理", "模型训练", "投资组合预测", "模型评估", "策略回测"]
+    page_options = ["数据管理", "模型训练", "投资组合预测", "模型评估", "策略回测", "仓位分析"]
     page = st.sidebar.radio("选择功能页面", page_options)
 
     # --- Settings Persistence ---
@@ -717,6 +803,7 @@ def main():
     elif page == "投资组合预测": prediction_page()
     elif page == "模型评估": model_evaluation_page()
     elif page == "策略回测": backtesting_page()
+    elif page == "仓位分析": position_analysis_page()
 
 if __name__ == "__main__":
     main()
