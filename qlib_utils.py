@@ -351,8 +351,27 @@ def backtest_strategy(model_path_str: str, qlib_dir: str, start_time: str, end_t
 
     analysis_df = pd.concat(analysis)  # This will be a DataFrame with metrics
 
-    # Return both the daily report for plotting and the analysis report for metrics
-    return report_df, analysis_df
+    # Generate figures in the backend
+    main_fig = px.line(report_df, x=report_df.index, y=['account', 'bench'], title="Strategy vs. Benchmark")
+
+    # Calculate and plot rolling Sharpe ratio
+    rolling_window = 252
+    daily_returns = report_df['return']
+    # Calculate rolling mean and std dev of returns
+    rolling_mean = daily_returns.rolling(window=rolling_window).mean()
+    rolling_std = daily_returns.rolling(window=rolling_window).std()
+    # Annualize the Sharpe ratio
+    rolling_sharpe = (rolling_mean / rolling_std) * (252**0.5)
+    rolling_sharpe_df = rolling_sharpe.to_frame('Rolling Sharpe Ratio').dropna()
+    sharpe_fig = px.line(rolling_sharpe_df, x=rolling_sharpe_df.index, y='Rolling Sharpe Ratio', title='Rolling Sharpe Ratio (252-day window)')
+
+    results = {
+        "daily": report_df,
+        "analysis": analysis_df,
+        "main_fig": main_fig,
+        "sharpe_fig": sharpe_fig,
+    }
+    return results
 
 def get_historical_prediction(model_path_str: str, qlib_dir: str, stock_id: str, start_date: str, end_date: str, placeholder=None):
     # This can be slow as it predicts day by day
@@ -374,6 +393,42 @@ def get_historical_prediction(model_path_str: str, qlib_dir: str, stock_id: str,
             continue
 
     return pd.DataFrame(all_scores)
+
+import plotly.express as px
+
+
+def _get_ic_decay_figure(pred_label: pd.DataFrame, max_lag: int = 10):
+    """
+    Calculates and plots the IC decay.
+    """
+    ic_decay_data = []
+    # The dataframe is already indexed by (datetime, instrument)
+    for lag in range(1, max_lag + 1):
+        # The label at time `t` is the return for the next period.
+        # To get the return for `h` periods ahead, we need to shift the label by `h-1`.
+        shifted_label = pred_label.groupby(level="instrument")["label"].shift(-(lag - 1))
+
+        # Combine score and shifted label
+        temp_df = pd.concat([pred_label["score"], shifted_label], axis=1).dropna()
+        temp_df.columns = ["score", "shifted_label"]
+
+        # Calculate IC for this lag
+        try:
+            # Calculate IC for each day and then take the mean
+            daily_ic = temp_df.groupby(level="datetime").apply(lambda x: x["score"].corr(x["shifted_label"]))
+            mean_ic = daily_ic.mean()
+        except Exception:
+            mean_ic = float("nan")  # Handle cases where correlation can't be computed
+
+        ic_decay_data.append({"Holding Period (days)": lag, "IC": mean_ic})
+
+    ic_decay_df = pd.DataFrame(ic_decay_data)
+
+    # Create the plot
+    fig = px.bar(ic_decay_df, x="Holding Period (days)", y="IC", title="IC Decay Analysis")
+    fig.update_layout(xaxis_title="Holding Period (days)", yaxis_title="Mean Information Coefficient (IC)")
+    return fig
+
 
 def get_model_info(model_path_str: str):
     """
@@ -488,8 +543,17 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None, tes
         )
         print("信号分析报告生成完毕。")
 
-        # --- 4. End of Evaluation ---
-        print("信号分析报告生成完毕。")
+        # --- 4. Generate IC Decay Figure ---
+        print("\n--- [3/3] 生成IC衰减分析报告 ---")
+        try:
+            ic_decay_fig = _get_ic_decay_figure(pred_label_df)
+            signal_figs.append(ic_decay_fig)
+            print("IC衰减分析报告生成完毕。")
+        except Exception as e:
+            print(f"无法生成IC衰减图: {e}")
+
+        # --- 5. End of Evaluation ---
+        print("所有评估报告生成完毕。")
 
     eval_log = log_stream.getvalue()
 
@@ -503,6 +567,20 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None, tes
     gc.collect()
 
     return results, eval_log
+
+import random
+
+def get_stock_sector(stock_id: str, qlib_dir: str):
+    """
+    Placeholder function to get the sector of a stock.
+    In a real application, this would look up the sector from a data source.
+    For now, it returns a random sector for demonstration purposes.
+    """
+    sectors = ['Technology', 'Financials', 'Healthcare', 'Consumer Cyclical', 'Industrials', 'Energy', 'Real Estate']
+    # Use a hash of the stock_id to make the random choice deterministic
+    seed = hash(stock_id)
+    random.seed(seed)
+    return random.choice(sectors)
 
 def get_position_analysis(model_path_str: str, qlib_dir: str, start_time: str, end_time: str, strategy_kwargs: dict, exchange_kwargs: dict):
     """
@@ -546,9 +624,33 @@ def get_position_analysis(model_path_str: str, qlib_dir: str, start_time: str, e
     analysis_df = risk_analysis(report_df["return"] - report_df["bench"] - report_df["cost"])
     risk_figs = qcr.analysis_position.risk_analysis_graph(analysis_df, report_df, show_notebook=False)
 
+    # --- Treemap Generation ---
+    treemap_fig = None
+    if positions_df is not None and not positions_df.empty:
+        try:
+            # Get latest positions
+            latest_date = positions_df.index.get_level_values('datetime').max()
+            latest_positions = positions_df.loc[positions_df.index.get_level_values('datetime') == latest_date].copy()
+
+            if not latest_positions.empty:
+                # Add sector information
+                latest_positions['sector'] = latest_positions['instrument'].apply(lambda x: get_stock_sector(x, qlib_dir))
+
+                # Calculate market value
+                latest_positions['market_value'] = latest_positions['amount'] * latest_positions['price']
+
+                # Create treemap
+                treemap_fig = px.treemap(latest_positions, path=[px.Constant("Portfolio"), 'sector', 'instrument'], values='market_value',
+                                          title=f'Portfolio Sector Allocation ({latest_date.strftime("%Y-%m-%d")})',
+                                          color_discrete_sequence=px.colors.qualitative.Plotly)
+        except Exception as e:
+            print(f"Could not generate treemap: {e}")
+
+
     results = {
         "positions": positions_df,
         "report": report_df,
         "risk_figures": risk_figs,
+        "treemap_fig": treemap_fig,
     }
     return results
