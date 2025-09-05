@@ -540,6 +540,7 @@ def backtesting_and_analysis_page():
     col1, col2 = st.columns(2)
     start_date = col1.date_input("开始日期", value=start_date_val, key="bt_start")
     end_date = col2.date_input("结束日期", value=end_date_val, key="bt_end")
+    benchmark = st.text_input("基准代码 (Benchmark Ticker)", "SH000300", help="用于对比的基准指数代码，例如沪深300是 'SH000300'。")
 
     st.subheader("策略参数 (Top-K Dropout)")
     c1, c2 = st.columns(2)
@@ -563,9 +564,13 @@ def backtesting_and_analysis_page():
             with st.spinner("正在执行回测与分析，此过程可能需要一些时间..."):
                 try:
                     results = run_backtest_and_analysis(
-                        selected_model_path, qlib_dir,
-                        start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"),
-                        strategy_kwargs, exchange_kwargs
+                        model_path=selected_model_path,
+                        qlib_dir=qlib_dir,
+                        start_time=start_date.strftime("%Y-%m-%d"),
+                        end_time=end_date.strftime("%Y-%m-%d"),
+                        strategy_kwargs=strategy_kwargs,
+                        exchange_kwargs=exchange_kwargs,
+                        benchmark=benchmark
                     )
                     st.session_state.backtest_results = results
                 except Exception as e:

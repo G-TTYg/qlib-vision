@@ -471,7 +471,7 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None, tes
 
     return results, eval_log
 
-def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: str, end_time: str, strategy_kwargs: dict, exchange_kwargs: dict):
+def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: str, end_time: str, strategy_kwargs: dict, exchange_kwargs: dict, benchmark: str):
     """
     Runs a comprehensive backtest and analysis, generating all necessary data for the UI in one go.
     """
@@ -504,7 +504,8 @@ def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: st
         start_time=start_time,
         end_time=end_time,
         strategy=strategy,
-        exchange_kwargs=exchange_kwargs
+        exchange_kwargs=exchange_kwargs,
+        benchmark=benchmark
     )
 
     # --- 3. Generate KPI Metrics & Risk Analysis DataFrame ---
