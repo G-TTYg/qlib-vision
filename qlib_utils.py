@@ -528,9 +528,15 @@ def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: st
 
     # --- 4. Generate Visualizations ---
     # 4.1 Main equity curve
+    # Create a copy for scaling to avoid changing the original report_df
+    report_df_scaled = report_df.copy()
+    if not report_df_scaled.empty:
+        initial_account_value = report_df_scaled['account'].iloc[0]
+        report_df_scaled['bench'] = report_df_scaled['bench'] * initial_account_value
+
     equity_curve_fig = px.line(
-        report_df.rename(columns={'account': '策略', 'bench': '基准'}),
-        x=report_df.index,
+        report_df_scaled.rename(columns={'account': '策略', 'bench': '基准'}),
+        x=report_df_scaled.index,
         y=['策略', '基准'],
         title="策略 vs. 基准 (扣除成本后)"
     )
