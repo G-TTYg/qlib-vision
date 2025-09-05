@@ -527,6 +527,12 @@ def backtesting_page():
     open_cost = c1.number_input("开仓手续费率", 0.0, 0.01, 0.0005, format="%.4f")
     close_cost = c2.number_input("平仓手续费率", 0.0, 0.01, 0.0015, format="%.4f")
     min_cost = c3.number_input("最低手续费", 0, 10, 5)
+
+    st.subheader("回测日志")
+    with st.container(height=300):
+        log_placeholder = st.empty()
+        log_placeholder.code("回测过程中的日志信息会显示在这里...", language="log")
+
     if st.button("开始回测", key="btn_bt"):
         if start_date >= end_date:
             st.error("开始日期必须早于结束日期！")
@@ -534,13 +540,15 @@ def backtesting_page():
         else:
             strategy_kwargs = {"topk": topk, "n_drop": n_drop}
             exchange_kwargs = {"open_cost": open_cost, "close_cost": close_cost, "min_cost": min_cost, "deal_price": "close"}
+            log_placeholder.empty() # Clear previous logs
             with st.spinner("正在回测..."):
                 try:
                     # backtest_strategy now returns two dataframes: one for daily values, one for analysis
                     daily_report_df, analysis_df = backtest_strategy(
                         selected_model_path, qlib_dir,
                         start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"),
-                        strategy_kwargs, exchange_kwargs
+                        strategy_kwargs, exchange_kwargs,
+                        log_placeholder=log_placeholder,
                     )
                     # The plot should only use the daily report
                     fig = px.line(daily_report_df, x=daily_report_df.index, y=['account', 'bench'], title="策略 vs. 基准")

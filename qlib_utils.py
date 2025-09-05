@@ -320,7 +320,7 @@ def predict(model_path_str: str, qlib_dir: str, prediction_date: str):
     prediction = prediction.reset_index().rename(columns={'instrument': 'StockID', 'datetime': 'Date'})
     return prediction.sort_values(by="score", ascending=False)
 
-def backtest_strategy(model_path_str: str, qlib_dir: str, start_time: str, end_time: str, strategy_kwargs: dict, exchange_kwargs: dict):
+def backtest_strategy(model_path_str: str, qlib_dir: str, start_time: str, end_time: str, strategy_kwargs: dict, exchange_kwargs: dict, log_placeholder=None):
     import qlib
     from qlib.utils import init_instance_by_config
     from qlib.contrib.strategy import TopkDropoutStrategy
@@ -340,8 +340,13 @@ def backtest_strategy(model_path_str: str, qlib_dir: str, start_time: str, end_t
     dataset = init_instance_by_config(config["dataset"])
     strategy = TopkDropoutStrategy(model=model, dataset=dataset, **strategy_kwargs)
 
-    # The backtest_daily function now primarily returns the daily portfolio results
-    report_df, _ = backtest_daily(start_time=start_time, end_time=end_time, strategy=strategy, exchange_kwargs=exchange_kwargs)
+    # Redirect stdout/stderr to the Streamlit placeholder if provided
+    log_stream = StreamlitLogHandler(log_placeholder) if log_placeholder else io.StringIO()
+    with redirect_stdout(log_stream), redirect_stderr(log_stream):
+        print("--- 策略回测开始 ---")
+        # The backtest_daily function now primarily returns the daily portfolio results
+        report_df, _ = backtest_daily(start_time=start_time, end_time=end_time, strategy=strategy, exchange_kwargs=exchange_kwargs)
+        print("--- 策略回测结束 ---")
 
     # We need to manually calculate the analysis metrics using risk_analysis
     analysis = dict()
