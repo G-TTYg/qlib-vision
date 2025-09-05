@@ -429,18 +429,18 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
 
         model = Model.load(model_path)
 
-        print("为保证评估顺利进行，临时创建`drop_raw=False`的数据集...")
-        eval_dataset_config = copy.deepcopy(config["dataset"])
-        eval_dataset_config["kwargs"]["handler"]["kwargs"]["drop_raw"] = False
-        dataset_for_eval = init_instance_by_config(eval_dataset_config)
-        print("数据集创建成功。")
+        # BUG FIX: Do not create a temporary dataset. Use the original dataset from the config
+        # to ensure data and index alignment throughout the process.
+        dataset = init_instance_by_config(config["dataset"])
+        print("数据集加载成功。")
 
         with R.start(experiment_name="model_evaluation_streamlit", recorder_name="InMemoryRecorder", resume=False):
             recorder = R.get_recorder()
 
             # 1. Generate prediction and run Signal Analysis
             print("\n--- [1/2] 开始信号分析 (Signal Analysis) ---")
-            sr = SignalRecord(model, dataset_for_eval, recorder)
+            # Use the single, consistent dataset instance
+            sr = SignalRecord(model, dataset, recorder)
             sr.generate()
             prediction_df = recorder.load_object("pred.pkl")
             sar = SigAnaRecord(recorder, ana_long_short=False)
@@ -480,7 +480,8 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
                 # to align with the pred_label df for the join operation.
                 prediction_df = prediction_df.set_index(["datetime", "instrument"])
 
-            pred_label = dataset_for_eval.prepare("test", col_set=["feature", "label"])
+            # Use the single, consistent dataset instance
+            pred_label = dataset.prepare("test", col_set=["feature", "label"])
             pred_label = pred_label.join(prediction_df)
             pred_label = pred_label.dropna()
             ic_series_for_graph = pred_label.groupby("datetime").apply(lambda df: df["score"].corr(df["label"]))
