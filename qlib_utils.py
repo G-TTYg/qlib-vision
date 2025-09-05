@@ -437,7 +437,8 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
         dataset_for_eval = init_instance_by_config(eval_dataset_config)
         print("数据集创建成功。")
 
-        with R.start(experiment_name="model_evaluation_streamlit", recorder_name="InMemoryRecorder", resume=False):
+        # By removing recorder_name, we use the default file-based recorder, which is more stable.
+        with R.start(experiment_name="model_evaluation_streamlit", resume=False):
             recorder = R.get_recorder()
 
             # 1. Generate prediction and run Signal Analysis
@@ -450,9 +451,8 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
             sar.generate()
 
             # Create the signal report DataFrame
-            # NOTE: InMemoryRecorder seems to flatten artifact paths, so we load without prefixes.
-            ic_series = recorder.load_object("ic.pkl")
-            ric_series = recorder.load_object("ric.pkl")
+            ic_series = recorder.load_object("sig_analysis/ic.pkl")
+            ric_series = recorder.load_object("sig_analysis/ric.pkl")
             metrics = {
                 "IC": ic_series.mean(), "ICIR": ic_series.mean() / ic_series.std(),
                 "Rank IC": ric_series.mean(), "Rank ICIR": ric_series.mean() / ric_series.std(),
@@ -470,18 +470,15 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
             par.generate()
 
             # Load artifacts for the frontend
-            portfolio_report = recorder.load_object("port_analysis_1day.pkl")
-            daily_report_for_graph = recorder.load_object("report_normal_1day.pkl")
+            portfolio_report = recorder.load_object("portfolio_analysis/port_analysis_1day.pkl")
+            daily_report_for_graph = recorder.load_object("portfolio_analysis/report_normal_1day.pkl")
             print("--- 投资组合分析完成 ---")
 
             # 3. Prepare data for IC graph
             print("\n--- [3/3] 准备IC图表数据 ---")
-            # BUG FIX: The loaded prediction_df may not have a MultiIndex, which causes a
-            # "Not allowed to merge between different levels" error on join.
-            # We must check and set the index correctly before joining.
+            # The loaded prediction_df may not have a MultiIndex.
+            # We must set it correctly before joining.
             if not isinstance(prediction_df.index, pd.MultiIndex):
-                # The loaded df has a flat index; we need to set it to (datetime, instrument)
-                # to align with the pred_label df for the join operation.
                 prediction_df = prediction_df.set_index(["datetime", "instrument"])
 
             # Use the single, consistent dataset instance
