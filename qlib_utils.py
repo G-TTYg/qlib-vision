@@ -524,8 +524,8 @@ def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: st
     )
 
     # Risk Analysis Figures for positions
-    risk_analysis_df = risk_analysis(report_df["return"] - report_df["bench"] - report_df["cost"])
-    risk_figures = analysis_position.risk_analysis_graph(risk_analysis_df, report_df, show_notebook=False)
+    # Pass a slice of the dataframe to ensure the input is a DataFrame, not a Series.
+    risk_figures = analysis_position.risk_analysis_graph(analysis_df[["excess_return_with_cost"]], report_df, show_notebook=False)
 
     # --- 5. Consolidate and Return Results ---
     results = {
