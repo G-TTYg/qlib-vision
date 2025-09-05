@@ -430,21 +430,35 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
         test_period = config["dataset"]["kwargs"]["segments"]["test"]
         print(f"模型和配置已加载。测试期: {test_period[0]} to {test_period[1]}")
 
-        # --- 2. Prepare pred_label DataFrame (Critical for fixing the bug) ---
+        # --- 2. Prepare pred_label DataFrame (This is the fix) ---
         print("\n--- [1/3] 准备预测数据 (pred_label) ---")
-        # Get predictions
+        # Get predictions (returns a Series with MultiIndex)
         prediction_df = model.predict(dataset, segment="test")
         prediction_df.name = 'score'
-        # Get labels by creating a temporary dataset that includes them
-        label_dataset_config = copy.deepcopy(config["dataset"])
-        label_dataset_config["kwargs"]["handler"]["kwargs"]["drop_raw"] = False
-        label_dataset = init_instance_by_config(label_dataset_config)
-        pred_label_df = label_dataset.prepare("test", col_set=["label"])
-        # JOINING: This is where the original error occurred.
-        # We ensure both have a MultiIndex before joining.
-        if not isinstance(prediction_df.index, pd.MultiIndex):
-            prediction_df = prediction_df.set_index(["datetime", "instrument"])
-        pred_label_df = pred_label_df.join(prediction_df, how="inner").dropna()
+
+        # Get labels (returns a DataFrame with MultiIndex) from the same dataset
+        pred_label_df_raw = dataset.prepare("test", col_set="label")
+
+        # Defensive merging: reset index on both and merge on columns.
+        # This is a robust way to avoid errors from incompatible indexes.
+        pred_df_for_merge = prediction_df.reset_index()
+        label_df_for_merge = pred_label_df_raw.reset_index()
+
+        # Merge on the common columns 'datetime' and 'instrument'
+        pred_label_df = pd.merge(
+            label_df_for_merge, pred_df_for_merge, on=["datetime", "instrument"], how="inner"
+        )
+
+        # Restore the multi-index, which is expected by qlib's reporting functions
+        pred_label_df = pred_label_df.set_index(["datetime", "instrument"]).dropna()
+
+        # After merging, if the dataframe is empty, it means the data did not align.
+        # This is a critical check to give a user-friendly error message.
+        if pred_label_df.empty:
+            raise ValueError(
+                "无法将模型预测值与标签数据对齐 (After merging, the DataFrame is empty). "
+                "这通常意味着测试集的时间范围或股票池配置有误，导致没有重叠的数据。"
+            )
         print("预测数据准备完成。")
 
         # --- 3. Generate Signal Analysis Figures ---
@@ -483,7 +497,7 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
     }
 
     # Clean up memory
-    del model, dataset, label_dataset, pred_label_df, prediction_df
+    del model, dataset, pred_label_df, prediction_df
     gc.collect()
 
     return results, eval_log
