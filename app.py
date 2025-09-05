@@ -690,48 +690,15 @@ def model_evaluation_page():
         st.success("模型评估完成！")
 
         results = st.session_state.eval_results
-
-        # Unpack the results from the new backend
         signal_figs = results.get("signal_figures", [])
-        portfolio_figs = results.get("portfolio_figures", [])
-        risk_analysis_table = results.get("risk_analysis_table")
-        raw_report_df = results.get("raw_report_df")
 
-        # Create tabs for results
-        tab1, tab2 = st.tabs(["图表分析 (Visualizations)", "详细数据 (Data Tables)"])
-
-        with tab1:
-            st.subheader("投资组合分析 (Portfolio Analysis)")
-            for fig in portfolio_figs:
-                st.plotly_chart(fig, use_container_width=True)
-
-            st.subheader("信号分析 (Signal Analysis)")
+        st.header("评估报告：信号分析")
+        if not signal_figs:
+            st.warning("未能生成任何信号分析图表。请检查日志输出。")
+        else:
+            st.info("信号分析（Signal Analysis）评估模型预测的“分数”本身的质量，即预测的有多准，与具体买卖的交易策略无关。")
             for fig in signal_figs:
                 st.plotly_chart(fig, use_container_width=True)
-
-        with tab2:
-            st.subheader("投资组合分析报告")
-            if risk_analysis_table is not None:
-                st.markdown("**关键绩效指标 (KPIs)**")
-                try:
-                    metrics = risk_analysis_table.loc["excess_return_with_cost"]
-                    kpi_cols = st.columns(4)
-                    kpi_cols[0].metric("年化收益率 (Annualized Return)", f"{metrics['annualized_return']:.2%}")
-                    kpi_cols[1].metric("信息比率 (Information Ratio)", f"{metrics['information_ratio']:.2f}")
-                    kpi_cols[2].metric("最大回撤 (Max Drawdown)", f"{metrics['max_drawdown']:.2%}")
-                    turnover = raw_report_df['turnover'].mean() if raw_report_df is not None else 0.0
-                    kpi_cols[3].metric("平均换手率 (Avg. Turnover)", f"{turnover:.3f}")
-                except KeyError:
-                    st.warning("无法从报告中提取部分关键绩效指标。")
-
-                st.markdown("**详细风险评估**")
-                st.dataframe(risk_analysis_table)
-            else:
-                st.warning("未能生成投资组合分析报告。")
-
-            if raw_report_df is not None:
-                with st.expander("查看每日收益和换手率的原始数据"):
-                    st.dataframe(raw_report_df)
 
 def position_analysis_page():
     st.header("策略仓位分析")

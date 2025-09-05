@@ -488,31 +488,14 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None, tes
         )
         print("信号分析报告生成完毕。")
 
-        # --- 4. Generate Portfolio Analysis Figures & Report ---
-        print("\n--- [3/3] 生成投资组合分析报告 ---")
-        strategy_kwargs = {"topk": 50, "n_drop": 5, "signal": prediction_df}
-        strategy_for_eval = TopkDropoutStrategy(**strategy_kwargs)
-        # Run backtest to get the daily report dataframe
-        report_df, _ = backtest_daily(
-            start_time=test_period[0], end_time=test_period[1], strategy=strategy_for_eval
-        )
-        # Generate the portfolio graph
-        portfolio_figs = qcr.analysis_position.report_graph(report_df, show_notebook=False)
-
-        # Generate the risk analysis table
-        analysis = dict()
-        analysis["excess_return_with_cost"] = risk_analysis(report_df["return"] - report_df["bench"] - report_df["cost"])
-        analysis_df = pd.concat(analysis)
-        print("投资组合分析报告生成完毕。")
+        # --- 4. End of Evaluation ---
+        print("信号分析报告生成完毕。")
 
     eval_log = log_stream.getvalue()
 
     # Consolidate results into a dictionary for the frontend
     results = {
         "signal_figures": signal_figs,
-        "portfolio_figures": portfolio_figs,
-        "risk_analysis_table": analysis_df,
-        "raw_report_df": report_df # For detailed view if needed
     }
 
     # Clean up memory
