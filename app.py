@@ -482,25 +482,24 @@ def backtesting_and_analysis_page():
           - `手续费率/最低收费`: 用于模拟真实交易成本，这会直接影响最终的净收益。
 
         #### 三、报告解读
-        报告分为四个主要部分，从宏观到微观，层层递进：
+        报告现在由三个核心部分组成，提供了一个完整、多维度的策略评估：
 
-        1.  **关键绩效指标 (KPIs)**
-            - `年化收益率 (超额)`: 策略收益率**超出**基准收益率的部分，年化后得出。这是衡量策略创造“alpha”能力的核心指标。
-            - `信息比率 (Information Ratio)`: 年化超额收益与其波动性（标准差）的比率。它衡量了获取超额收益的效率和稳定性，比率越高越好。
-            - `最大回撤 (超额)`: 策略净值从前期高点回落到低点的最大幅度。这是衡量策略可能面临的**最坏情况**和风险承受能力的关键指标。
-            - `换手率 (Turnover Rate)`: 衡量交易的频繁程度。过高的换手率会增加交易成本，侵蚀利润。
+        1.  **综合回测报告 (Overall Report)**
+            - `(由 report_graph 生成)`
+            - 这是最核心的回测图表，展示了策略的**累计收益**、**与基准的超额收益**、**每日换手率**以及重要的**回撤区间**。通过这张图，您可以对策略的整体表现有一个宏观的认识。
 
-        2.  **资金曲线**
-            - 该图直观地展示了策略（扣除成本后）与市场基准（如沪深300指数）的累计收益对比。理想情况下，策略曲线应持续稳定地在基准曲线之上。
+        2.  **IC 分析 (IC Analysis)**
+            - `(由 score_ic_graph 生成)`
+            - 这部分图表评估的是模型**预测能力**的本身，即模型的预测分数（Score）与未来真实收益（Label）的相关性。
+            - `IC` 和 `Rank IC` 的时间序列图和均值，是判断模型好坏的核心依据。一个好的模型，其IC值应该持续、稳定地大于0。
 
-        3.  **持仓分析图表**
-            - `Rank Label`: 标签（未来收益）与持仓股票数量的分布图，帮助了解策略持仓的收益分布。
-            - `持股数量`: 每日持有的股票数量。
-            - `策略换手率`: 每日的换手率，反映交易频率。
-            - `多空头暴露`: 衡量策略在多头和空头上的资金分配（本策略仅做多）。
+        3.  **风险分析 (Risk Analysis)**
+            - `(由 risk_analysis_graph 生成)`
+            - 这部分图表将策略的各项风险指标（如年化收益、信息比率、最大回撤）按**年度和月度**进行了分解。
+            - 通过它，您可以观察到策略在不同市场环境下的表现是否稳定，例如，策略在哪一年表现最好，在哪一月回撤最大。
 
-        4.  **每日详细持仓**
-            - 这是一个详细的数据表，记录了每一天持有的每一只股票的代码、成本、价格、权重等信息，提供了最终极的透明度。
+        4.  **每日详细持仓 (Daily Holdings)**
+            - 这是一个详细的数据表，记录了回测期间每一天的详细持仓股票、成本、价格、权重等信息，提供了最终极的透明度。
         """)
 
     if "backtest_results" not in st.session_state:
@@ -581,53 +580,48 @@ def backtesting_and_analysis_page():
     if st.session_state.backtest_results:
         st.success("回测与分析完成！")
         results = st.session_state.backtest_results
-        analysis_df = results["analysis_df"]
-        positions_df = results["positions_df"]
-        equity_curve_fig = results["equity_curve_fig"]
-        risk_figures = results["risk_figures"]
 
-        # --- Section 1: Key Performance Indicators ---
-        st.subheader("关键绩效指标 (KPIs)")
-        # Access metrics from the MultiIndex DataFrame.
-        # The first level of the index is the analysis type, the second is the metric name. The column is 'risk'.
-        try:
-            annualized_return = analysis_df.loc[('excess_return_with_cost', 'annualized_return'), 'risk']
-            information_ratio = analysis_df.loc[('excess_return_with_cost', 'information_ratio'), 'risk']
-            max_drawdown = analysis_df.loc[('excess_return_with_cost', 'max_drawdown'), 'risk']
-            turnover_rate = analysis_df.loc[('excess_return_with_cost', 'turnover_rate'), 'risk']
+        # Unpack all the results from the backend
+        positions_df = results.get("positions_df")
+        report_figures = results.get("report_figures", [])
+        risk_figures = results.get("risk_figures", [])
+        ic_figures = results.get("ic_figures", [])
 
-            kpi_cols = st.columns(4)
-            kpi_cols[0].metric("年化收益率 (超额)", f"{annualized_return:.2%}")
-            kpi_cols[1].metric("信息比率", f"{information_ratio:.2f}")
-            kpi_cols[2].metric("最大回撤 (超额)", f"{max_drawdown:.2%}")
-            kpi_cols[3].metric("换手率", f"{turnover_rate:.2f}")
-        except KeyError:
-            st.warning("无法从分析报告中提取关键绩效指标。报告的格式可能不是预期的。")
+        # Display section for the main report graphs
+        st.subheader("综合回测报告 (Overall Report)")
+        if report_figures:
+            for fig in report_figures:
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("未能生成综合回测报告图。")
 
-        equity_curve_fig = results["equity_curve_fig"]
-        risk_figures = results["risk_figures"]
+        # Display section for IC analysis graphs
+        st.subheader("IC 分析 (IC Analysis)")
+        if ic_figures:
+            for fig in ic_figures:
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("未能生成IC分析图。")
 
-        # --- Section 2: Equity Curve ---
-        st.subheader("资金曲线")
-        st.plotly_chart(equity_curve_fig, use_container_width=True)
+        # Display section for risk analysis graphs
+        st.subheader("风险分析 (Risk Analysis)")
+        if risk_figures:
+            for fig in risk_figures:
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("未能生成风险分析图。")
 
-        # --- Section 3: Detailed Metrics ---
-        with st.expander("查看详细分析报告"):
-            st.dataframe(analysis_df)
-
-        # --- Section 4: Position Analysis ---
-        st.subheader("持仓分析")
-        for fig in risk_figures:
-            st.plotly_chart(fig, use_container_width=True)
-
-        with st.expander("查看每日详细持仓"):
-            st.info("下表记录了回测期间每一天的详细持仓情况，包括每只股票的代码、持仓成本、当前价格和持仓权重。")
-            # Robustly convert all object-type columns to strings to prevent pyarrow serialization errors.
-            # This is safer than guessing which specific column contains the unserializable `Position` objects.
-            for col in positions_df.columns:
-                if positions_df[col].dtype == 'object':
-                    positions_df[col] = positions_df[col].astype(str)
-            st.dataframe(positions_df)
+        # Display section for detailed daily holdings
+        with st.expander("查看每日详细持仓 (Daily Holdings)"):
+            if positions_df is not None and not positions_df.empty:
+                st.info("下表记录了回测期间每一天的详细持仓情况，包括每只股票的代码、持仓成本、当前价格和持仓权重。")
+                # Robustly convert all object-type columns to strings to prevent pyarrow serialization errors.
+                for col in positions_df.columns:
+                    if positions_df[col].dtype == 'object':
+                        positions_df[col] = positions_df[col].astype(str)
+                st.dataframe(positions_df)
+            else:
+                st.info("没有可显示的每日持仓数据。")
 
 def model_evaluation_page():
     st.header("模型评估")

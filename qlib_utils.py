@@ -473,18 +473,18 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None, tes
 
 def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: str, end_time: str, strategy_kwargs: dict, exchange_kwargs: dict, benchmark: str):
     """
-    Runs a comprehensive backtest and analysis, generating all necessary data for the UI in one go.
+    Runs a comprehensive backtest and analysis, generating all necessary data and figures for the UI in one go.
     """
     import qlib
     from qlib.utils import init_instance_by_config
     from qlib.contrib.strategy import TopkDropoutStrategy
     from qlib.contrib.evaluate import backtest_daily, risk_analysis
     from qlib.contrib.report import analysis_position
-    import plotly.express as px
+    from qlib.data import D
 
     qlib.auto_init(provider_uri=qlib_dir)
 
-    # --- 1. Load Model, Config, and Dataset ---
+    # --- 1. Load Model and Config ---
     model_path = Path(model_path_str)
     config_path = model_path.with_suffix(".yaml")
     if not config_path.exists():
@@ -493,12 +493,14 @@ def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: st
         config = yaml.load(f, Loader=yaml.FullLoader)
     model = Model.load(model_path)
 
+    # --- 2. Prepare Dataset for the given time range ---
     config["dataset"]["kwargs"]["handler"]["kwargs"]["start_time"] = start_time
     config["dataset"]["kwargs"]["handler"]["kwargs"]["end_time"] = end_time
+    # IMPORTANT: The segment 'test' is what the model's `predict` method will use.
     config["dataset"]["kwargs"]["segments"] = {"test": (start_time, end_time)}
     dataset = init_instance_by_config(config["dataset"])
 
-    # --- 2. Instantiate Strategy and Run Backtest ---
+    # --- 3. Instantiate Strategy and Run Backtest ---
     strategy = TopkDropoutStrategy(model=model, dataset=dataset, **strategy_kwargs)
     report_df, positions_df = backtest_daily(
         start_time=start_time,
@@ -508,41 +510,35 @@ def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: st
         benchmark=benchmark
     )
 
-    # --- 3. Generate KPI Metrics & Risk Analysis DataFrame ---
-    # This part is aligned with the official qlib documentation for `risk_analysis_graph`
+    # --- 4. Generate All Figures ---
+    # 4.1: Prepare data for risk_analysis_graph
     analysis = dict()
-    analysis["excess_return_without_cost"] = risk_analysis(
-        report_df["return"] - report_df["bench"], freq="day"
-    )
     analysis["excess_return_with_cost"] = risk_analysis(
         report_df["return"] - report_df["bench"] - report_df["cost"], freq="day"
     )
-    analysis_df = pd.concat(analysis) # This creates the MultiIndex DataFrame
+    analysis_df = pd.concat(analysis)
+    risk_figures = analysis_position.risk_analysis.risk_analysis_graph(analysis_df, report_df, show_notebook=False)
 
-    # --- 4. Generate Visualizations ---
-    # Manually create the main equity curve for direct control over its appearance
-    equity_curve_fig = px.line(
-        report_df.rename(columns={'account': '策略', 'bench': '基准'}),
-        x=report_df.index,
-        y=['策略', '基准'],
-        title="策略 vs. 基准 (扣除成本后)"
-    )
+    # 4.2: Prepare data for score_ic_graph
+    pred_df = model.predict(dataset)
+    label_df = dataset.prepare("test", col_set="label")
+    pred_label = pd.concat([label_df, pred_df], axis=1, sort=True).reindex(label_df.index)
+    ic_figures = analysis_position.score_ic.score_ic_graph(pred_label, show_notebook=False)
 
-    # Generate the other risk figures using the standard qlib function
-    risk_figures = analysis_position.risk_analysis_graph(analysis_df, report_df, show_notebook=False)
+    # 4.3: Generate main report figures
+    report_figures = analysis_position.report.report_graph(report_df, show_notebook=False)
 
 
     # --- 5. Consolidate and Return Results ---
     results = {
-        "report_df": report_df,
-        "analysis_df": analysis_df,
         "positions_df": positions_df,
-        "equity_curve_fig": equity_curve_fig,
+        "report_figures": report_figures,
         "risk_figures": risk_figures,
+        "ic_figures": ic_figures,
     }
 
     # --- 6. Memory Cleanup ---
-    del model, dataset, report_df, positions_df, analysis_df
+    del model, dataset, report_df, positions_df, analysis_df, pred_df, label_df, pred_label
     gc.collect()
 
     return results
