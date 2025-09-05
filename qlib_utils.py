@@ -478,9 +478,10 @@ def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: st
     import qlib
     from qlib.utils import init_instance_by_config
     from qlib.contrib.strategy import TopkDropoutStrategy
-    from qlib.contrib.evaluate import backtest_daily
+    from qlib.contrib.evaluate import backtest_daily, risk_analysis
     from qlib.contrib.report.analysis_position import report as report_analysis
     from qlib.contrib.report.analysis_position import score_ic as score_ic_analysis
+    from qlib.contrib.report import analysis_position
     import plotly.express as px
 
     qlib.auto_init(provider_uri=qlib_dir)
@@ -509,19 +510,24 @@ def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: st
         benchmark=benchmark
     )
 
-    # --- 3. Generate pred_label DataFrame for IC analysis ---
+    # --- 3. Generate pred_label and analysis_df for reporting ---
+    # 3.1 pred_label for IC
     pred_scores = model.predict(dataset, segment="test")
     pred_scores.name = 'score'
     labels = dataset.prepare("test", col_set="label")
-    # The default label name in qlib is not always 'label'.
     if labels.columns[0] != 'label':
         labels = labels.rename(columns={labels.columns[0]: 'label'})
-    pred_label_df = pd.concat([pred_scores, labels], axis=1, sort=True).reindex(labels.index)
-    pred_label_df = pred_label_df.dropna()
+    pred_label_df = pd.concat([pred_scores, labels], axis=1, sort=True).reindex(labels.index).dropna()
+
+    # 3.2 analysis_df for risk analysis
+    analysis = dict()
+    analysis["excess_return_without_cost"] = risk_analysis(report_df["return"] - report_df["bench"], freq="day")
+    analysis["excess_return_with_cost"] = risk_analysis(report_df["return"] - report_df["bench"] - report_df["cost"], freq="day")
+    analysis_df = pd.concat(analysis)
 
 
-    # --- 4. Generate Visualizations using qlib.contrib.report ---
-    # Manually create the main equity curve for direct control over its appearance
+    # --- 4. Generate Visualizations ---
+    # 4.1 Main equity curve
     equity_curve_fig = px.line(
         report_df.rename(columns={'account': '策略', 'bench': '基准'}),
         x=report_df.index,
@@ -529,27 +535,29 @@ def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: st
         title="策略 vs. 基准 (扣除成本后)"
     )
 
-    # Generate the KPI figures using the requested qlib functions
+    # 4.2 User-requested KPI figures
     kpi_figures = []
     report_figs = report_analysis.report_graph(report_df, show_notebook=False)
-    if report_figs:
-        kpi_figures.extend(report_figs)
-
+    if report_figs: kpi_figures.extend(report_figs)
     ic_figs = score_ic_analysis.score_ic_graph(pred_label_df, show_notebook=False)
-    if ic_figs:
-        kpi_figures.extend(ic_figs)
+    if ic_figs: kpi_figures.extend(ic_figs)
+
+    # 4.3 Restored risk analysis figures
+    risk_figures = analysis_position.risk_analysis_graph(analysis_df, report_df, show_notebook=False)
 
 
     # --- 5. Consolidate and Return Results ---
     results = {
         "report_df": report_df,
         "positions_df": positions_df,
+        "analysis_df": analysis_df,
         "equity_curve_fig": equity_curve_fig,
-        "kpi_figures": kpi_figures, # New key for the new figures
+        "kpi_figures": kpi_figures,
+        "risk_figures": risk_figures,
     }
 
     # --- 6. Memory Cleanup ---
-    del model, dataset, report_df, positions_df, pred_label_df
+    del model, dataset, report_df, positions_df, pred_label_df, analysis_df
     gc.collect()
 
     return results

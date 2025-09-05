@@ -564,7 +564,7 @@ def backtesting_and_analysis_page():
             with st.spinner("正在执行回测与分析，此过程可能需要一些时间..."):
                 try:
                     results = run_backtest_and_analysis(
-                        model_path_str=selected_model_path,
+                        model_path=selected_model_path,
                         qlib_dir=qlib_dir,
                         start_time=start_date.strftime("%Y-%m-%d"),
                         end_time=end_date.strftime("%Y-%m-%d"),
@@ -595,27 +595,35 @@ def backtesting_and_analysis_page():
             for fig in kpi_figures:
                 st.plotly_chart(fig, use_container_width=True)
         else:
-            st.warning("未能生成KPI图表。")
-            # Fallback to display old analysis dataframe if it exists
-            if "analysis_df" in results:
-                st.info("检测到旧版分析数据，将为您展示。请考虑重新运行回测以生成新版图表。")
-                st.dataframe(results["analysis_df"])
+            st.warning("未能生成新的KPI图表。")
 
+        # --- Section 3: Position and Risk Analysis ---
+        st.subheader("持仓分析与风险评估")
+        risk_figures = results.get("risk_figures", [])
+        if risk_figures:
+            for fig in risk_figures:
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("未能生成持仓分析图表。")
 
-        # --- Section 3: Detailed Backtest Report (Raw Data) ---
-        with st.expander("查看详细回测报告 (原始数据)"):
-            st.dataframe(results["report_df"])
+        # --- Section 4: Detailed Metrics and Positions ---
+        with st.expander("查看详细分析报告 (表格)"):
+            st.dataframe(results["analysis_df"])
 
-
-        # --- Section 4: Daily Positions ---
         with st.expander("查看每日详细持仓"):
             st.info("下表记录了回测期间每一天的详细持仓情况，包括每只股票的代码、持仓成本、当前价格和持仓权重。")
-            # Robustly convert all object-type columns to strings to prevent pyarrow serialization errors.
-            # This is safer than guessing which specific column contains the unserializable `Position` objects.
-            for col in positions_df.columns:
-                if positions_df[col].dtype == 'object':
-                    positions_df[col] = positions_df[col].astype(str)
-            st.dataframe(positions_df)
+            if isinstance(positions_df, pd.DataFrame):
+                # Robustly convert all object-type columns to strings to prevent pyarrow serialization errors.
+                # This is safer than guessing which specific column contains the unserializable `Position` objects.
+                df_to_show = positions_df.copy()
+                for col in df_to_show.columns:
+                    if df_to_show[col].dtype == 'object':
+                        df_to_show[col] = df_to_show[col].astype(str)
+                st.dataframe(df_to_show)
+            else:
+                st.warning("每日持仓数据不是有效的表格格式，无法显示。")
+                st.write("收到的数据内容：")
+                st.json(positions_df if isinstance(positions_df, dict) else str(positions_df))
 
 def model_evaluation_page():
     st.header("模型评估")
