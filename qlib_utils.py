@@ -479,7 +479,7 @@ def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: st
     from qlib.utils import init_instance_by_config
     from qlib.contrib.strategy import TopkDropoutStrategy
     from qlib.contrib.evaluate import backtest_daily, risk_analysis
-    import qlib.contrib.report as qcr
+    from qlib.contrib.report import analysis_position
     import plotly.express as px
 
     qlib.auto_init(provider_uri=qlib_dir)
@@ -525,7 +525,7 @@ def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: st
 
     # Risk Analysis Figures for positions
     risk_analysis_df = risk_analysis(report_df["return"] - report_df["bench"] - report_df["cost"])
-    risk_figures = qcr.analysis_position.risk_analysis_graph(risk_analysis_df, report_df, show_notebook=False)
+    risk_figures = analysis_position.risk_analysis_graph(risk_analysis_df, report_df, show_notebook=False)
 
     # --- 5. Consolidate and Return Results ---
     results = {
