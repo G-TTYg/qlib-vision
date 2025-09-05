@@ -434,6 +434,7 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
         print("\n--- [1/3] 准备预测数据 (pred_label) ---")
         # Get predictions
         prediction_df = model.predict(dataset, segment="test")
+        prediction_df.name = 'score'
         # Get labels by creating a temporary dataset that includes them
         label_dataset_config = copy.deepcopy(config["dataset"])
         label_dataset_config["kwargs"]["handler"]["kwargs"]["drop_raw"] = False
@@ -489,12 +490,13 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
 
 def get_position_analysis(model_path_str: str, qlib_dir: str, start_time: str, end_time: str, strategy_kwargs: dict, exchange_kwargs: dict):
     """
-    Runs a backtest and returns the detailed position information along with the performance report.
+    Runs a backtest and returns the detailed position information along with performance analysis figures.
     """
     import qlib
     from qlib.utils import init_instance_by_config
     from qlib.contrib.strategy import TopkDropoutStrategy
-    from qlib.contrib.evaluate import backtest_daily
+    from qlib.contrib.evaluate import backtest_daily, risk_analysis
+    import qlib.contrib.report as qcr
 
     qlib.auto_init(provider_uri=qlib_dir)
 
@@ -524,4 +526,13 @@ def get_position_analysis(model_path_str: str, qlib_dir: str, start_time: str, e
         exchange_kwargs=exchange_kwargs
     )
 
-    return report_df, positions_df
+    # Generate risk analysis dataframe and figures
+    analysis_df = risk_analysis(report_df["return"] - report_df["bench"] - report_df["cost"])
+    risk_figs = qcr.analysis_position.risk_analysis_graph(analysis_df, report_df, show_notebook=False)
+
+    results = {
+        "positions": positions_df,
+        "report": report_df,
+        "risk_figures": risk_figs,
+    }
+    return results
