@@ -564,7 +564,7 @@ def backtesting_and_analysis_page():
             with st.spinner("正在执行回测与分析，此过程可能需要一些时间..."):
                 try:
                     results = run_backtest_and_analysis(
-                        model_path=selected_model_path,
+                        model_path_str=selected_model_path,
                         qlib_dir=qlib_dir,
                         start_time=start_date.strftime("%Y-%m-%d"),
                         end_time=end_date.strftime("%Y-%m-%d"),
@@ -612,18 +612,38 @@ def backtesting_and_analysis_page():
 
         with st.expander("查看每日详细持仓"):
             st.info("下表记录了回测期间每一天的详细持仓情况，包括每只股票的代码、持仓成本、当前价格和持仓权重。")
+
             if isinstance(positions_df, pd.DataFrame):
-                # Robustly convert all object-type columns to strings to prevent pyarrow serialization errors.
-                # This is safer than guessing which specific column contains the unserializable `Position` objects.
+                # Case 1: positions_df is a single DataFrame
                 df_to_show = positions_df.copy()
                 for col in df_to_show.columns:
                     if df_to_show[col].dtype == 'object':
                         df_to_show[col] = df_to_show[col].astype(str)
                 st.dataframe(df_to_show)
+            elif isinstance(positions_df, dict):
+                # Case 2: positions_df is a dictionary keyed by date
+                st.write("每日持仓详情 (按日期展开):")
+                sorted_dates = sorted(positions_df.keys())
+                for date in sorted_dates:
+                    with st.expander(f"持仓日期: {pd.to_datetime(date).strftime('%Y-%m-%d')}"):
+                        daily_pos = positions_df[date]
+                        if isinstance(daily_pos, list) and daily_pos:
+                            try:
+                                # Attempt to convert list of Position objects to a DataFrame
+                                st.dataframe(pd.DataFrame([p.__dict__ for p in daily_pos]))
+                            except Exception:
+                                st.write(daily_pos) # Fallback for other list contents
+                        elif isinstance(daily_pos, pd.DataFrame):
+                            st.dataframe(daily_pos)
+                        elif not daily_pos:
+                            st.text("当日无持仓。")
+                        else:
+                            st.text("当日持仓数据格式未知。")
+                            st.write(daily_pos)
             else:
-                st.warning("每日持仓数据不是有效的表格格式，无法显示。")
-                st.write("收到的数据内容：")
-                st.json(positions_df if isinstance(positions_df, dict) else str(positions_df))
+                # Fallback for any other unexpected type
+                st.warning("每日持仓数据格式未知，无法以表格形式显示。")
+                st.write(positions_df)
 
 def model_evaluation_page():
     st.header("模型评估")
