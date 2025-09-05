@@ -7,9 +7,9 @@ import qlib
 from qlib.constant import REG_CN
 from pathlib import Path
 from qlib_utils import (
-    MODELS, FACTORS, train_model, predict, backtest_strategy,
+    MODELS, FACTORS, train_model, predict, run_backtest_and_analysis,
     update_daily_data, check_data_health, get_data_summary, get_historical_prediction,
-    evaluate_model, load_settings, save_settings, get_model_info, get_position_analysis
+    evaluate_model, load_settings, save_settings, get_model_info
 )
 import pandas as pd
 import plotly.express as px
@@ -460,40 +460,53 @@ def prediction_page():
         elif st.session_state.hist_results["status"] == "empty":
             st.warning("在指定时间段内未能获取到该股票的有效预测分数。")
 
-def backtesting_page():
-    st.header("策略回测")
-    with st.expander("💡 操作指南 (Operation Guide)"):
+def backtesting_and_analysis_page():
+    st.header("策略回测与分析")
+    with st.expander("💡 操作指南 (Operation Guide)", expanded=True):
         st.markdown("""
-        **本页面基于您训练好的模型，运行一个具体、透明的交易策略，以评估模型的实战表现。**
+        **本页面将模型预测与实际交易策略相结合，提供一个从策略表现到每日持仓的全面、深入的分析报告。**
 
-        **- 核心作用:**
-          - **实战模拟**: 将模型的预测分数转化为实际的买卖操作，并在历史数据上进行模拟交易，以检验模型的盈利能力。
-          - **策略探索**: 您可以调整策略参数，观察其对最终收益、风险和交易成本的影响。
+        #### 一、核心功能
+        - **实战模拟**: 将模型的预测分数转化为透明的买卖操作，并在历史数据上进行模拟交易，以检验模型的真实盈利能力和风险。
+        - **风险洞察**: 不仅展示收益，更深入分析策略的风险来源，如持股集中度、交易频率等。
+        - **持仓追溯**: 可以查看回测期间任何一天的详细持仓记录，让策略的每一个决策都清晰可见。
 
-        **- 策略解释: Top-K Dropout**
-          - 这是一个非常经典的选股策略。
-          - **操作流程**: 在每个交易日，根据您的模型给出的分数，买入得分最高的 `K` 只股票。买入后，持有 `N` 天，然后在第N天后卖出。
-          - **例如**: 设置 `Top-K=50`, `持有期=5`。程序会在今天买入模型评分最高的50只股票，5个交易日后，将这些股票全部卖出。每天如此循环。
+        #### 二、参数解释
+        - **回测参数**:
+          - `开始/结束日期`: 定义了进行模拟交易的历史时间段。
+        - **策略参数: Top-K Dropout**
+          - 这是一个经典的选股策略。在每个交易日，买入模型评分最高的 `K` 只股票，持有 `N` 天后卖出。
+          - `买入Top-K只股票`: 每天买入的股票数量。K值越小，策略越集中，潜在风险和收益都可能更高。
+          - `持有期(天)`: 每只股票的持有天数。持有期越短，交易越频繁，换手率和交易成本也越高。
+        - **交易参数**:
+          - `手续费率/最低收费`: 用于模拟真实交易成本，这会直接影响最终的净收益。
 
-        **- 参数解释:**
-          - **回测参数**:
-            - `开始/结束日期`: 定义了进行模拟交易的历史时间段。
-          - **策略参数**:
-            - `买入Top-K只股票`: 每天买入多少只股票。K值越小，策略越集中，风险和潜在收益都可能更高。
-            - `持有期(天)`: 每只股票买入后持有几天。持有期越短，交易越频繁，换手率和交易成本会更高。
-          - **交易参数**:
-            - `开/平仓手续费率`: 模拟真实交易中券商收取的手续费。
-            - `最低手续费`: 很多券商有单笔最低5元的收费标准。
+        #### 三、报告解读
+        报告分为四个主要部分，从宏观到微观，层层递进：
 
-        **- 操作流程:**
-          1. 选择一个您希望进行回测的模型。
-          2. 设置回测的时间范围、策略参数和交易参数。
-          3. 点击“开始回测”，下方会生成包含“年化收益率”、“最大回撤”等关键指标的绩效报告，以及策略净值和基准对比的资金曲线图。
+        1.  **关键绩效指标 (KPIs)**
+            - `年化收益率 (超额)`: 策略收益率**超出**基准收益率的部分，年化后得出。这是衡量策略创造“alpha”能力的核心指标。
+            - `信息比率 (Information Ratio)`: 年化超额收益与其波动性（标准差）的比率。它衡量了获取超额收益的效率和稳定性，比率越高越好。
+            - `最大回撤 (超额)`: 策略净值从前期高点回落到低点的最大幅度。这是衡量策略可能面临的**最坏情况**和风险承受能力的关键指标。
+            - `换手率 (Turnover Rate)`: 衡量交易的频繁程度。过高的换手率会增加交易成本，侵蚀利润。
+
+        2.  **资金曲线**
+            - 该图直观地展示了策略（扣除成本后）与市场基准（如沪深300指数）的累计收益对比。理想情况下，策略曲线应持续稳定地在基准曲线之上。
+
+        3.  **持仓分析图表**
+            - `Rank Label`: 标签（未来收益）与持仓股票数量的分布图，帮助了解策略持仓的收益分布。
+            - `持股数量`: 每日持有的股票数量。
+            - `策略换手率`: 每日的换手率，反映交易频率。
+            - `多空头暴露`: 衡量策略在多头和空头上的资金分配（本策略仅做多）。
+
+        4.  **每日详细持仓**
+            - 这是一个详细的数据表，记录了每一天持有的每一只股票的代码、成本、价格、权重等信息，提供了最终极的透明度。
         """)
 
     if "backtest_results" not in st.session_state:
         st.session_state.backtest_results = None
 
+    # --- Setup and Model Selection ---
     qlib_dir = st.session_state.settings.get("qlib_data_path", str(Path.home() / ".qlib" / "qlib_data" / "cn_data"))
     models_dir = st.session_state.settings.get("models_path", str(Path.home() / "qlib_models"))
     st.info(f"当前Qlib数据路径: `{qlib_dir}`")
@@ -505,106 +518,137 @@ def backtesting_page():
         return
     selected_model_name = st.selectbox("选择一个模型文件进行回测", available_models, key="bt_model_select")
 
-    # --- Date Override UI ---
-    # Set fallback default dates
-    start_date_val = datetime.date(2022, 1, 1)
-    end_date_val = datetime.date.today() - datetime.timedelta(days=1)
-
-    # If a model is selected, load its config to set the default dates
+    # --- Date Configuration ---
+    start_date_val, end_date_val = datetime.date(2022, 1, 1), datetime.date.today() - datetime.timedelta(days=1)
     if selected_model_name:
         config_path = (models_dir_path / selected_model_name).with_suffix(".yaml")
         if config_path.exists():
             try:
                 with open(config_path, "r") as f:
                     config = yaml.load(f, Loader=yaml.FullLoader)
-                default_test_period = config.get("dataset", {}).get("kwargs", {}).get("segments", {}).get("test")
-                if default_test_period and len(default_test_period) == 2:
-                    start_date_val = pd.to_datetime(default_test_period[0]).date()
-                    end_date_val = pd.to_datetime(default_test_period[1]).date()
+                test_period = config.get("dataset", {}).get("kwargs", {}).get("segments", {}).get("test")
+                if test_period and len(test_period) == 2:
+                    start_date_val, end_date_val = pd.to_datetime(test_period[0]).date(), pd.to_datetime(test_period[1]).date()
             except Exception as e:
                 st.warning(f"无法加载模型配置文件 {config_path.name} 中的默认日期: {e}")
 
     selected_model_path = str(models_dir_path / selected_model_name) if selected_model_name else None
+
+    # --- Parameters UI ---
     st.subheader("回测参数配置")
     st.info("默认加载模型训练时使用的测试集时间范围，可手动修改。")
     col1, col2 = st.columns(2)
     start_date = col1.date_input("开始日期", value=start_date_val, key="bt_start")
     end_date = col2.date_input("结束日期", value=end_date_val, key="bt_end")
+
     st.subheader("策略参数 (Top-K Dropout)")
     c1, c2 = st.columns(2)
     topk = c1.number_input("买入Top-K只股票", 1, 100, 50)
     n_drop = c2.number_input("持有期(天)", 1, 20, 5)
+
     st.subheader("交易参数")
     c1, c2, c3 = st.columns(3)
     open_cost = c1.number_input("开仓手续费率", 0.0, 0.01, 0.0005, format="%.4f")
     close_cost = c2.number_input("平仓手续费率", 0.0, 0.01, 0.0015, format="%.4f")
     min_cost = c3.number_input("最低手续费", 0, 10, 5)
-    if st.button("开始回测", key="btn_bt"):
+
+    # --- Execution Button ---
+    if st.button("开始回测与分析", key="btn_bt_run"):
         if start_date >= end_date:
             st.error("开始日期必须早于结束日期！")
             st.session_state.backtest_results = None
         else:
             strategy_kwargs = {"topk": topk, "n_drop": n_drop}
             exchange_kwargs = {"open_cost": open_cost, "close_cost": close_cost, "min_cost": min_cost, "deal_price": "close"}
-            with st.spinner("正在回测..."):
+            with st.spinner("正在执行回测与分析，此过程可能需要一些时间..."):
                 try:
-                    # backtest_strategy now returns two dataframes: one for daily values, one for analysis
-                    daily_report_df, analysis_df = backtest_strategy(
+                    results = run_backtest_and_analysis(
                         selected_model_path, qlib_dir,
                         start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"),
                         strategy_kwargs, exchange_kwargs
                     )
-                    # The plot should only use the daily report
-                    fig = px.line(daily_report_df, x=daily_report_df.index, y=['account', 'bench'], title="策略 vs. 基准")
-                    st.session_state.backtest_results = {"daily": daily_report_df, "analysis": analysis_df, "fig": fig}
+                    st.session_state.backtest_results = results
                 except Exception as e:
-                    st.error(f"回测过程中发生错误: {e}")
+                    st.error(f"回测分析过程中发生错误: {e}")
                     st.session_state.backtest_results = None
 
+    # --- Results Display ---
     if st.session_state.backtest_results:
-        st.success("回测完成！")
-        st.subheader("绩效指标")
-        # Metrics are now in the 'analysis' dataframe
-        analysis_df = st.session_state.backtest_results["analysis"]
+        st.success("回测与分析完成！")
+        results = st.session_state.backtest_results
+        analysis_df = results["analysis_df"]
+        positions_df = results["positions_df"]
+        equity_curve_fig = results["equity_curve_fig"]
+        risk_figures = results["risk_figures"]
+
+        # --- Section 1: Key Performance Indicators ---
+        st.subheader("关键绩效指标 (KPIs)")
         metrics = analysis_df.loc["excess_return_with_cost"]
         kpi_cols = st.columns(4)
-        kpi_cols[0].metric("年化收益率", f"{metrics['annualized_return']:.2%}")
+        kpi_cols[0].metric("年化收益率 (超额)", f"{metrics['annualized_return']:.2%}")
         kpi_cols[1].metric("信息比率", f"{metrics['information_ratio']:.2f}")
-        kpi_cols[2].metric("最大回撤", f"{metrics['max_drawdown']:.2%}")
+        kpi_cols[2].metric("最大回撤 (超额)", f"{metrics['max_drawdown']:.2%}")
         kpi_cols[3].metric("换手率", f"{metrics['turnover_rate']:.2f}")
 
+        # --- Section 2: Equity Curve ---
         st.subheader("资金曲线")
-        st.plotly_chart(st.session_state.backtest_results["fig"], use_container_width=True)
+        st.plotly_chart(equity_curve_fig, use_container_width=True)
 
+        # --- Section 3: Detailed Metrics ---
         with st.expander("查看详细分析报告"):
-            with st.container(height=300):
-                st.dataframe(analysis_df)
+            st.dataframe(analysis_df)
+
+        # --- Section 4: Position Analysis ---
+        st.subheader("持仓分析")
+        for fig in risk_figures:
+            st.plotly_chart(fig, use_container_width=True)
+
+        with st.expander("查看每日详细持仓"):
+            st.info("下表记录了回测期间每一天的详细持仓情况，包括每只股票的代码、持仓成本、当前价格和持仓权重。")
+            st.dataframe(positions_df)
 
 def model_evaluation_page():
     st.header("模型评估")
-    with st.expander("💡 操作指南 (Operation Guide)"):
+    with st.expander("💡 操作指南 (Operation Guide)", expanded=True):
         st.markdown("""
         **本页面对单个模型进行一次全面、标准化的体检，是评判模型好坏的关键。**
-        **- 核心作用:**
-          - **综合评估**: 从“预测准确度”和“模拟实战”两个维度，对模型进行深度分析，避免单一指标带来的误判。
-          - **标准化流程**: 所有模型都走同一套评估流程，确保了不同模型之间性能的可比性。
-        **- 报告解读:**
-          - **1. 信号分析 (Signal Analysis)**:
-            - **用途**: 评估模型预测的“分数”（Signal）本身的质量，即预测的有多准，与交易策略无关。
-            - **关键指标**:
-              - `IC (Information Coefficient)`: 信息系数，衡量预测值与真实值之间的相关性。IC的绝对值越高，说明预测越准。通常大于0.02就认为有一定预测能力。
-              - `Rank IC`: 等级信息系数，衡量预测值的排序与真实值的排序之间的相关性。在选股任务中，排序比具体数值更重要，因此这是更关键的指标。
-              - `ICIR`, `Rank ICIR`: IC和Rank IC的均值除以其标准差，衡量IC的稳定性。大于0.3通常被认为是不错的水平。
-          - **2. 组合分析 (Portfolio Analysis)**:
-            - **用途**: 基于模型分数，模拟一个标准的“Top-K”选股策略，看这个策略在历史上的表现如何。这反映了模型在实战中的潜力。
-            - **关键指标**:
-              - `annualized_return` (年化收益率): 策略的年化收益水平。
-              - `information_ratio` (信息比率): 策略的超额收益（相对于基准）与其波动性的比率，是衡量主动投资管理能力的核心指标（类似夏普比率）。
-              - `max_drawdown` (最大回撤): 策略历史上从最高点回落到最低点的最大幅度，是衡量风险的重要指标。
-              - `turnover_rate` (换手率): 衡量交易的频繁程度。过高的换手率会侵蚀利润。
-        **- 操作流程:**
+
+        #### 一、核心作用
+        - **综合评估**: 从“预测准确度”和“模拟实战潜力”两个维度，对模型进行深度分析，避免单一指标带来的误判。
+        - **标准化流程**: 所有模型都走同一套评估流程，确保了不同模型之间性能的可比性。
+
+        #### 二、报告解读
+        评估报告主要包含**信号分析 (Signal Analysis)**，它评估的是模型预测的“分数”（Signal）本身的质量，即预测的有多准，这与任何具体的交易策略无关。
+
+        ##### **关键指标详解:**
+        - **`IC (Information Coefficient)` - 信息系数**:
+          - **定义**: 计算模型预测的`分数(score)`与`未来真实收益(label)`之间的**皮尔逊相关系数**。
+          - **解读**: IC的范围是 `[-1, 1]`。
+            - `IC > 0`: 预测方向正确（预测分高的股票未来收益也高）。
+            - `IC < 0`: 预测方向相反。
+            - `IC 绝对值` 越高，代表预测能力越强。在量化领域，**IC的绝对值通常很低**，一般认为 `|IC| > 0.02` 就有一定预测价值，`|IC| > 0.05` 就算相当不错的模型了。
+
+        - **`Rank IC (Rank Information Coefficient)` - 等级信息系数**:
+          - **定义**: 计算`分数(score)`的**排序**与`未来真实收益(label)`的**排序**之间的**斯皮尔曼相关系数**。
+          - **解读**: 对于选股模型来说，我们更关心的是**相对排序**（哪些股票比其他股票更好），而不是分数的绝对值。因此，**Rank IC 是比 IC 更重要的核心指标**。它的解读方式与IC类似，`|Rank IC| > 0.03` 通常被认为是有效信号。
+
+        - **`ICIR (Information Coefficient Information Ratio)` - 信息系数比率**:
+          - **定义**: `ICIR = mean(IC) / std(IC)`，即 **IC均值** 除以 **IC标准差**。
+          - **解读**: ICIR衡量了模型预测能力的**稳定性和强度**。一个模型可能某些天IC很高，某些天很低甚至为负。ICIR越高，说明模型在整个回测期间内能持续、稳定地产生正向的IC。通常认为 `|ICIR| > 0.5` 是一个比较强的信号。
+
+        - **`Rank ICIR (Rank Information Coefficient Information Ratio)` - 等级信息系数比率**:
+          - **定义**: `Rank ICIR = mean(Rank IC) / std(Rank IC)`。
+          - **解读**: 同理，这是衡量模型**排序能力稳定性**的核心指标。一个高且稳定的Rank ICIR，是优秀选股模型的标志。
+
+        ##### **图表解读:**
+        - **IC Series / Rank IC Series**: 展示了在回测期内，每一天的IC/Rank IC的值。可以直观地看出模型表现的波动性。
+        - **IC Distribution / Rank IC Distribution**: IC/Rank IC的直方图，展示了IC值的分布情况。
+        - **Group Return**: 将股票按模型分数从高到低分为几组（Quantile），计算每组的平均收益率。一个好的模型，其`Group 1`（得分最高组）的收益率应显著高于其他组，且收益率应大致随组号递减。
+
+        #### 三、操作流程
           1. 从下拉框中选择一个您已经训练好的模型。
-          2. 点击“开始评估”，等待几分钟，下方会生成两份详细的报告。
+          2. （可选）修改评估的起止日期，默认为模型训练时设定的测试集周期。
+          3. 点击“开始评估”，等待片刻，下方即会生成完整的信号分析报告。
         """)
 
     # Initialize session state
@@ -700,88 +744,6 @@ def model_evaluation_page():
             for fig in signal_figs:
                 st.plotly_chart(fig, use_container_width=True)
 
-def position_analysis_page():
-    st.header("策略仓位分析")
-    with st.expander("💡 操作指南 (Operation Guide)"):
-        st.markdown("""
-        **本页面旨在提供对策略在回测期间每日持仓的深入洞察。**
-        **- 核心作用:**
-          - **持仓透明化**: 查看在回测的任何一天，策略具体持有哪些股票。
-          - **风险暴露分析**: 直观地了解策略的集中度。
-        **- 操作流程:**
-          1. **选择模型和配置**: 选择模型、回测时间段和策略参数。
-          2. **开始分析**: 点击按钮，后台将运行回测以生成每日持仓记录。
-          3. **查看数据**: 页面会显示整体的策略表现和详细的每日持仓数据表。
-        """)
-
-    # Initialize session state
-    if "pa_results" not in st.session_state:
-        st.session_state.pa_results = None
-
-    # --- Setup ---
-    qlib_dir = st.session_state.settings.get("qlib_data_path", str(Path.home() / ".qlib" / "qlib_data" / "cn_data"))
-    models_dir = st.session_state.settings.get("models_path", str(Path.home() / "qlib_models"))
-    st.info(f"当前模型加载路径: `{models_dir}` (可在左侧边栏修改)")
-    models_dir_path = Path(models_dir).expanduser()
-    available_models = [f.name for f in models_dir_path.glob("*.pkl")] if models_dir_path.exists() else []
-    if not available_models:
-        st.warning(f"在 '{models_dir_path}' 中未找到模型。")
-        return
-
-    # --- UI Controls ---
-    selected_model_name = st.selectbox("选择一个模型文件进行分析", available_models, key="pa_model_select")
-    selected_model_path = str(models_dir_path / selected_model_name)
-
-    st.subheader("分析参数配置")
-    col1, col2 = st.columns(2)
-    start_date = col1.date_input("开始日期", datetime.date.today() - datetime.timedelta(days=90), key="pa_start")
-    end_date = col2.date_input("结束日期", datetime.date.today() - datetime.timedelta(days=1), key="pa_end")
-
-    st.subheader("策略参数 (Top-K Dropout)")
-    c1, c2 = st.columns(2)
-    topk = c1.number_input("买入Top-K只股票", 1, 100, 30, key="pa_topk")
-    n_drop = c2.number_input("持有期(天)", 1, 20, 5, key="pa_ndrop")
-
-    exchange_kwargs = {"open_cost": 0.0005, "close_cost": 0.0015, "min_cost": 5, "deal_price": "close"}
-
-
-    if st.button("开始分析", key="btn_pa_run"):
-        if start_date >= end_date:
-            st.error("开始日期必须早于结束日期！")
-            st.session_state.pa_results = None
-        else:
-            strategy_kwargs = {"topk": topk, "n_drop": n_drop}
-            with st.spinner("正在运行回测以生成仓位数据..."):
-                try:
-                    # The backend function now returns a dictionary
-                    results = get_position_analysis(
-                        selected_model_path, qlib_dir,
-                        start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"),
-                        strategy_kwargs, exchange_kwargs
-                    )
-                    st.session_state.pa_results = results
-                except Exception as e:
-                    st.error(f"分析过程中发生错误: {e}")
-                    st.session_state.pa_results = None
-
-    # --- Display Results ---
-    if st.session_state.pa_results:
-        st.success("仓位数据分析完成！")
-
-        positions_df = st.session_state.pa_results.get("positions")
-        risk_figures = st.session_state.pa_results.get("risk_figures", [])
-
-        st.subheader("整体策略表现")
-        # Display the figures generated by the backend
-        for fig in risk_figures:
-            st.plotly_chart(fig, use_container_width=True)
-
-        st.subheader("每日持仓数据")
-        if positions_df is None or positions_df.empty:
-            st.warning("未能获取任何持仓数据。")
-        else:
-            st.dataframe(positions_df)
-
 def main():
     st.set_page_config(layout="wide", page_title="Qlib 可视化工具")
 
@@ -793,7 +755,7 @@ def main():
     st.sidebar.title("Qlib 可视化面板")
 
     # --- Page Selection ---
-    page_options = ["数据管理", "模型训练", "投资组合预测", "模型评估", "策略回测", "仓位分析"]
+    page_options = ["数据管理", "模型训练", "投资组合预测", "模型评估", "策略回测与分析"]
     page = st.sidebar.radio("选择功能页面", page_options)
 
     # --- Settings Persistence ---
@@ -824,8 +786,7 @@ def main():
     elif page == "模型训练": model_training_page()
     elif page == "投资组合预测": prediction_page()
     elif page == "模型评估": model_evaluation_page()
-    elif page == "策略回测": backtesting_page()
-    elif page == "仓位分析": position_analysis_page()
+    elif page == "策略回测与分析": backtesting_and_analysis_page()
 
 if __name__ == "__main__":
     main()

@@ -320,39 +320,6 @@ def predict(model_path_str: str, qlib_dir: str, prediction_date: str):
     prediction = prediction.reset_index().rename(columns={'instrument': 'StockID', 'datetime': 'Date'})
     return prediction.sort_values(by="score", ascending=False)
 
-def backtest_strategy(model_path_str: str, qlib_dir: str, start_time: str, end_time: str, strategy_kwargs: dict, exchange_kwargs: dict):
-    import qlib
-    from qlib.utils import init_instance_by_config
-    from qlib.contrib.strategy import TopkDropoutStrategy
-    from qlib.contrib.evaluate import backtest_daily, risk_analysis
-    qlib.auto_init(provider_uri=qlib_dir)
-
-    model_path = Path(model_path_str)
-    config_path = model_path.with_suffix(".yaml")
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config file {config_path} not found for model {model_path.name}")
-    with open(config_path, 'r') as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
-    model = Model.load(model_path)
-    config["dataset"]["kwargs"]["handler"]["kwargs"]["start_time"] = start_time
-    config["dataset"]["kwargs"]["handler"]["kwargs"]["end_time"] = end_time
-    config["dataset"]["kwargs"]["segments"]["test"] = (start_time, end_time)
-    dataset = init_instance_by_config(config["dataset"])
-    strategy = TopkDropoutStrategy(model=model, dataset=dataset, **strategy_kwargs)
-
-    # The backtest_daily function now primarily returns the daily portfolio results
-    report_df, _ = backtest_daily(start_time=start_time, end_time=end_time, strategy=strategy, exchange_kwargs=exchange_kwargs)
-
-    # We need to manually calculate the analysis metrics using risk_analysis
-    analysis = dict()
-    analysis["excess_return_without_cost"] = risk_analysis(report_df["return"] - report_df["bench"])
-    analysis["excess_return_with_cost"] = risk_analysis(report_df["return"] - report_df["bench"] - report_df["cost"])
-    analysis["return"] = risk_analysis(report_df["return"])
-
-    analysis_df = pd.concat(analysis)  # This will be a DataFrame with metrics
-
-    # Return both the daily report for plotting and the analysis report for metrics
-    return report_df, analysis_df
 
 def get_historical_prediction(model_path_str: str, qlib_dir: str, stock_id: str, start_date: str, end_date: str, placeholder=None):
     # This can be slow as it predicts day by day
@@ -504,19 +471,20 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None, tes
 
     return results, eval_log
 
-def get_position_analysis(model_path_str: str, qlib_dir: str, start_time: str, end_time: str, strategy_kwargs: dict, exchange_kwargs: dict):
+def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: str, end_time: str, strategy_kwargs: dict, exchange_kwargs: dict):
     """
-    Runs a backtest and returns the detailed position information along with performance analysis figures.
+    Runs a comprehensive backtest and analysis, generating all necessary data for the UI in one go.
     """
     import qlib
     from qlib.utils import init_instance_by_config
     from qlib.contrib.strategy import TopkDropoutStrategy
     from qlib.contrib.evaluate import backtest_daily, risk_analysis
     import qlib.contrib.report as qcr
+    import plotly.express as px
 
     qlib.auto_init(provider_uri=qlib_dir)
 
-    # Load model and config
+    # --- 1. Load Model, Config, and Dataset ---
     model_path = Path(model_path_str)
     config_path = model_path.with_suffix(".yaml")
     if not config_path.exists():
@@ -525,16 +493,13 @@ def get_position_analysis(model_path_str: str, qlib_dir: str, start_time: str, e
         config = yaml.load(f, Loader=yaml.FullLoader)
     model = Model.load(model_path)
 
-    # Prepare dataset for the backtest period
     config["dataset"]["kwargs"]["handler"]["kwargs"]["start_time"] = start_time
     config["dataset"]["kwargs"]["handler"]["kwargs"]["end_time"] = end_time
     config["dataset"]["kwargs"]["segments"] = {"test": (start_time, end_time)}
     dataset = init_instance_by_config(config["dataset"])
 
-    # Instantiate strategy
+    # --- 2. Instantiate Strategy and Run Backtest ---
     strategy = TopkDropoutStrategy(model=model, dataset=dataset, **strategy_kwargs)
-
-    # Run backtest and capture both report and positions
     report_df, positions_df = backtest_daily(
         start_time=start_time,
         end_time=end_time,
@@ -542,13 +507,37 @@ def get_position_analysis(model_path_str: str, qlib_dir: str, start_time: str, e
         exchange_kwargs=exchange_kwargs
     )
 
-    # Generate risk analysis dataframe and figures
-    analysis_df = risk_analysis(report_df["return"] - report_df["bench"] - report_df["cost"])
-    risk_figs = qcr.analysis_position.risk_analysis_graph(analysis_df, report_df, show_notebook=False)
+    # --- 3. Generate Performance Metrics (KPIs) ---
+    analysis = dict()
+    analysis["excess_return_without_cost"] = risk_analysis(report_df["return"] - report_df["bench"])
+    analysis["excess_return_with_cost"] = risk_analysis(report_df["return"] - report_df["bench"] - report_df["cost"])
+    analysis["return_with_cost"] = risk_analysis(report_df["return"] - report_df["cost"])
+    analysis_df = pd.concat(analysis)
 
+    # --- 4. Generate Visualizations ---
+    # Main Equity Curve
+    equity_curve_fig = px.line(
+        report_df.rename(columns={'account': '策略', 'bench': '基准'}),
+        x=report_df.index,
+        y=['策略', '基准'],
+        title="策略 vs. 基准 (扣除成本后)"
+    )
+
+    # Risk Analysis Figures for positions
+    risk_analysis_df = risk_analysis(report_df["return"] - report_df["bench"] - report_df["cost"])
+    risk_figures = qcr.analysis_position.risk_analysis_graph(risk_analysis_df, report_df, show_notebook=False)
+
+    # --- 5. Consolidate and Return Results ---
     results = {
-        "positions": positions_df,
-        "report": report_df,
-        "risk_figures": risk_figs,
+        "report_df": report_df,
+        "analysis_df": analysis_df,
+        "positions_df": positions_df,
+        "equity_curve_fig": equity_curve_fig,
+        "risk_figures": risk_figures,
     }
+
+    # --- 6. Memory Cleanup ---
+    del model, dataset, report_df, positions_df, analysis_df
+    gc.collect()
+
     return results
