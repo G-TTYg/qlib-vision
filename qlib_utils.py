@@ -473,14 +473,13 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None, tes
 
 def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: str, end_time: str, strategy_kwargs: dict, exchange_kwargs: dict, benchmark: str):
     """
-    Runs a comprehensive backtest and analysis, generating all necessary data and figures for the UI in one go.
+    Runs a backtest and generates a comprehensive analysis including report figures and risk figures.
     """
     import qlib
     from qlib.utils import init_instance_by_config
     from qlib.contrib.strategy import TopkDropoutStrategy
     from qlib.contrib.evaluate import backtest_daily, risk_analysis
     from qlib.contrib.report import analysis_position
-    from qlib.data import D
 
     qlib.auto_init(provider_uri=qlib_dir)
 
@@ -496,22 +495,28 @@ def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: st
     # --- 2. Prepare Dataset for the given time range ---
     config["dataset"]["kwargs"]["handler"]["kwargs"]["start_time"] = start_time
     config["dataset"]["kwargs"]["handler"]["kwargs"]["end_time"] = end_time
-    # IMPORTANT: The segment 'test' is what the model's `predict` method will use.
-    config["dataset"]["kwargs"]["segments"] = {"test": (start_time, end_time)}
+    # IMPORTANT: Only update the 'test' segment to preserve other segments like 'train' and 'valid' from the config file.
+    config["dataset"]["kwargs"]["segments"]["test"] = (start_time, end_time)
     dataset = init_instance_by_config(config["dataset"])
 
     # --- 3. Instantiate Strategy and Run Backtest ---
     strategy = TopkDropoutStrategy(model=model, dataset=dataset, **strategy_kwargs)
-    report_df, positions_df = backtest_daily(
+
+    # The backtest function returns a dict. The daily report and positions are in the 'day' key.
+    portfolio_metric_dict, _ = backtest_daily(
         start_time=start_time,
         end_time=end_time,
         strategy=strategy,
         exchange_kwargs=exchange_kwargs,
         benchmark=benchmark
     )
+    report_df, positions_df = portfolio_metric_dict.get('day')
 
     # --- 4. Generate All Figures ---
-    # 4.1: Prepare data for risk_analysis_graph
+    # 4.1: Main Report Figures (e.g., cumulative returns)
+    report_figures = analysis_position.report.report_graph(report_df, show_notebook=False)
+
+    # 4.2: Risk Analysis Figures (e.g., monthly returns and drawdowns)
     analysis = dict()
     analysis["excess_return_with_cost"] = risk_analysis(
         report_df["return"] - report_df["bench"] - report_df["cost"], freq="day"
@@ -519,14 +524,11 @@ def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: st
     analysis_df = pd.concat(analysis)
     risk_figures = analysis_position.risk_analysis.risk_analysis_graph(analysis_df, report_df, show_notebook=False)
 
-    # 4.2: Prepare data for score_ic_graph
+    # 4.3: IC Analysis Figures
     pred_df = model.predict(dataset)
     label_df = dataset.prepare("test", col_set="label")
     pred_label = pd.concat([label_df, pred_df], axis=1, sort=True).reindex(label_df.index)
     ic_figures = analysis_position.score_ic.score_ic_graph(pred_label, show_notebook=False)
-
-    # 4.3: Generate main report figures
-    report_figures = analysis_position.report.report_graph(report_df, show_notebook=False)
 
 
     # --- 5. Consolidate and Return Results ---
