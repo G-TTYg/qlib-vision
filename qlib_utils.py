@@ -508,11 +508,19 @@ def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: st
     )
 
     # --- 3. Generate Performance Metrics (KPIs) ---
+    # This aligns with the logic in qlib.workflow.record_temp.PortAnaRecord
     analysis = dict()
     analysis["excess_return_without_cost"] = risk_analysis(report_df["return"] - report_df["bench"])
     analysis["excess_return_with_cost"] = risk_analysis(report_df["return"] - report_df["bench"] - report_df["cost"])
     analysis["return_with_cost"] = risk_analysis(report_df["return"] - report_df["cost"])
-    analysis_df = pd.concat(analysis)
+
+    # The raw_analysis_df has a MultiIndex, which is the native qlib structure.
+    # It assumes risk_analysis() returns a DataFrame with a 'risk' column.
+    raw_analysis_df = pd.concat(analysis)
+
+    # For the UI, we need a simpler DataFrame with metrics as columns. We unstack the inner level of the index.
+    analysis_df = raw_analysis_df["risk"].unstack(level=1)
+
 
     # --- 4. Generate Visualizations ---
     # Main Equity Curve
@@ -524,8 +532,10 @@ def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: st
     )
 
     # Risk Analysis Figures for positions
-    # Pass a slice of the dataframe to ensure the input is a DataFrame, not a Series.
-    risk_figures = analysis_position.risk_analysis_graph(analysis_df[["excess_return_with_cost"]], report_df, show_notebook=False)
+    # Pass the original, single-column DataFrame from a single risk_analysis call to the graphing function.
+    # This is the most robust way to ensure the function gets the exact input format it expects.
+    risk_analysis_input_df = analysis["excess_return_with_cost"]
+    risk_figures = analysis_position.risk_analysis_graph(risk_analysis_input_df, report_df, show_notebook=False)
 
     # --- 5. Consolidate and Return Results ---
     results = {
