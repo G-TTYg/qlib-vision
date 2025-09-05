@@ -661,6 +661,14 @@ def model_evaluation_page():
             # Create portfolio graph from daily report data
             fig_portfolio = px.line(daily_report_df, x=daily_report_df.index, y=['account', 'bench'], title="策略 vs. 基准 (Portfolio vs. Benchmark)")
             st.plotly_chart(fig_portfolio, use_container_width=True)
+            st.download_button(
+                "下载投资组合每日数据 (Download Portfolio Daily Data)",
+                daily_report_df.to_csv(index=True).encode('utf-8'),
+                "portfolio_daily_report.csv",
+                "text/csv",
+                key='download-portfolio'
+            )
+
 
             st.subheader("IC 分析 (IC Analysis)")
             # Create IC graph from IC series data
@@ -669,6 +677,13 @@ def model_evaluation_page():
             else:
                 fig_ic = px.bar(ic_series_df, x=ic_series_df.index, y=ic_series_df.columns[0], title="每日IC (Daily IC)")
                 st.plotly_chart(fig_ic, use_container_width=True)
+                st.download_button(
+                    "下载IC每日数据 (Download IC Daily Data)",
+                    ic_series_df.to_csv(index=True).encode('utf-8'),
+                    "ic_daily_series.csv",
+                    "text/csv",
+                    key='download-ic'
+                )
 
 
         with tab2:

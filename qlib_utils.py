@@ -409,9 +409,6 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
     evaluation and returns a dictionary of clean pandas DataFrames and Series.
     All plotting logic has been moved to the frontend (`app.py`) as per
     the user's suggestion for a cleaner separation of concerns.
-
-    Evaluate a trained model using qlib's standard analysis recorders.
-    Returns a dictionary containing signal analysis and portfolio analysis results.
     """
     import qlib
     from qlib.utils import init_instance_by_config
@@ -475,9 +472,12 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
 
             # 3. Prepare data for IC graph
             print("\n--- [3/3] 准备IC图表数据 ---")
-            # BUG FIX: The loaded prediction_df may not have a MultiIndex.
-            # We must set it correctly before joining.
+            # BUG FIX: The loaded prediction_df may not have a MultiIndex, which causes a
+            # "Not allowed to merge between different levels" error on join.
+            # We must check and set the index correctly before joining.
             if not isinstance(prediction_df.index, pd.MultiIndex):
+                # The loaded df has a flat index; we need to set it to (datetime, instrument)
+                # to align with the pred_label df for the join operation.
                 prediction_df = prediction_df.set_index(["datetime", "instrument"])
 
             pred_label = dataset_for_eval.prepare("test", col_set=["feature", "label"])
