@@ -614,6 +614,11 @@ def backtesting_and_analysis_page():
 
         with st.expander("查看每日详细持仓"):
             st.info("下表记录了回测期间每一天的详细持仓情况，包括每只股票的代码、持仓成本、当前价格和持仓权重。")
+            # Robustly convert all object-type columns to strings to prevent pyarrow serialization errors.
+            # This is safer than guessing which specific column contains the unserializable `Position` objects.
+            for col in positions_df.columns:
+                if positions_df[col].dtype == 'object':
+                    positions_df[col] = positions_df[col].astype(str)
             st.dataframe(positions_df)
 
 def model_evaluation_page():

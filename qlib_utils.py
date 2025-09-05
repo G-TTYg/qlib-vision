@@ -511,10 +511,12 @@ def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: st
     # This logic is now aligned with the official qlib documentation.
     analysis = dict()
     analysis["excess_return_without_cost"] = risk_analysis(
-        report_df["return"] - report_df["bench"]
+        report_df["return"] - report_df["bench"],
+        freq='day'
     )
     analysis["excess_return_with_cost"] = risk_analysis(
-        report_df["return"] - report_df["bench"] - report_df["cost"]
+        report_df["return"] - report_df["bench"] - report_df["cost"],
+        freq='day'
     )
 
     # pd.concat creates the MultiIndex DataFrame required by risk_analysis_graph
