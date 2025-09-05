@@ -404,6 +404,12 @@ def get_model_info(model_path_str: str):
 
 def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
     """
+    ARCHITECTURAL REFACTOR:
+    This function is now responsible ONLY for data processing. It runs the
+    evaluation and returns a dictionary of clean pandas DataFrames and Series.
+    All plotting logic has been moved to the frontend (`app.py`) as per
+    the user's suggestion for a cleaner separation of concerns.
+
     Evaluate a trained model using qlib's standard analysis recorders.
     Returns a dictionary containing signal analysis and portfolio analysis results.
     """
@@ -411,7 +417,6 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
     from qlib.utils import init_instance_by_config
     from qlib.workflow import R
     from qlib.workflow.record_temp import SignalRecord, PortAnaRecord, SigAnaRecord
-    from qlib.contrib.report.analysis_position import report_graph, score_ic_graph
 
     log_stream = StreamlitLogHandler(log_placeholder) if log_placeholder else io.StringIO()
     with redirect_stdout(log_stream), redirect_stderr(log_stream):
@@ -443,19 +448,15 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
             prediction_df = recorder.load_object("pred.pkl")
             sar = SigAnaRecord(recorder, ana_long_short=False)
             sar.generate()
-            # NOTE: The new qlib API saves IC and Rank IC as separate artifacts
-            # instead of a single report dict. We need to load them and compute the metrics manually.
+
+            # Create the signal report DataFrame
             ic_series = recorder.load_object("sig_analysis/ic.pkl")
             ric_series = recorder.load_object("sig_analysis/ric.pkl")
             metrics = {
-                "IC": ic_series.mean(),
-                "ICIR": ic_series.mean() / ic_series.std(),
-                "Rank IC": ric_series.mean(),
-                "Rank ICIR": ric_series.mean() / ric_series.std(),
+                "IC": ic_series.mean(), "ICIR": ic_series.mean() / ic_series.std(),
+                "Rank IC": ric_series.mean(), "Rank ICIR": ric_series.mean() / ric_series.std(),
             }
-            # The UI expects a DataFrame for the signal report
-            signal_report = pd.DataFrame.from_dict(metrics, orient="index")
-            signal_report.columns = ["value"]
+            signal_report = pd.DataFrame.from_dict(metrics, orient="index", columns=["value"])
             print("--- 信号分析完成 ---")
 
             # 2. Run Portfolio Analysis
@@ -464,63 +465,32 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
             benchmark = "SH000300" if instruments == "csi300" else "SH000905"
             test_period = config["dataset"]["kwargs"]["segments"]["test"]
             port_analysis_config = { "strategy": { "class": "TopkDropoutStrategy", "module_path": "qlib.contrib.strategy", "kwargs": { "signal": prediction_df, "topk": 50, "n_drop": 5, }, }, "backtest": { "start_time": test_period[0], "end_time": test_period[1], "account": 100000000, "benchmark": benchmark, "exchange_kwargs": { "freq": "day", "limit_threshold": 0.095, "deal_price": "close", "open_cost": 0.0005, "close_cost": 0.0015, "min_cost": 5, }, }, }
-            # BUG FIX: The PortAnaRecord class normalizes the frequency string.
-            # For example, a frequency of "day" passed to the constructor will be
-            # normalized to "1day" when creating artifact filenames.
-            # The code must load the artifacts with the normalized frequency name.
             par = PortAnaRecord(recorder, port_analysis_config, risk_analysis_freq="day")
             par.generate()
 
-            # NOTE: The new qlib API saves portfolio analysis in multiple parts.
-            # We load the two main ones needed for the UI.
-            # 1. `port_analysis_1day.pkl`: A DataFrame with detailed risk metrics for the table view.
-            # 2. `report_normal_1day.pkl`: A DataFrame with daily account values for plotting the graph.
+            # Load artifacts for the frontend
             portfolio_report = recorder.load_object("portfolio_analysis/port_analysis_1day.pkl")
             daily_report_for_graph = recorder.load_object("portfolio_analysis/report_normal_1day.pkl")
             print("--- 投资组合分析完成 ---")
 
-            # 3. Generate graphs
-            print("\n--- [3/3] 开始生成可视化图表 ---")
-            # 3.1 Portfolio Analysis Graph
-            # The report_graph function expects the daily values report, which we loaded into daily_report_for_graph.
-            report_figure = report_graph(daily_report_for_graph, show_notebook=False)[0]
-            print("投资组合分析图表... Done")
+            # 3. Prepare data for IC graph
+            print("\n--- [3/3] 准备IC图表数据 ---")
+            # BUG FIX: The loaded prediction_df may not have a MultiIndex.
+            # We must set it correctly before joining.
+            if not isinstance(prediction_df.index, pd.MultiIndex):
+                prediction_df = prediction_df.set_index(["datetime", "instrument"])
 
-            # 3.2 Score IC Graph
-            # BUG FIX: Handle cases where IC cannot be computed, which would crash the plotting function.
-            # This can happen if predictions or labels are constant on a given day, resulting in NaN correlation.
             pred_label = dataset_for_eval.prepare("test", col_set=["feature", "label"])
-            # Using .join() is a more robust way to merge the prediction scores
-            # with the features and labels, preventing potential dimension mismatch errors.
             pred_label = pred_label.join(prediction_df)
             pred_label = pred_label.dropna()
-
-            # Calculate IC series manually to check for validity before plotting
-            ic_series = pred_label.groupby("datetime").apply(lambda df: df["score"].corr(df["label"]))
-
-            if ic_series.dropna().empty:
-                # If all IC values are NaN, plotting will fail.
-                # Create a blank figure with a message instead.
-                import plotly.graph_objects as go
-                ic_figure = go.Figure()
-                ic_figure.update_layout(
-                    title_text="IC Analysis (No valid data to plot)",
-                    xaxis_showticklabels=False, yaxis_showticklabels=False
-                )
-                print("IC分析图表... Skipped (No valid data)")
-            else:
-                # If there is valid data, proceed with normal plotting.
-                ic_figure = score_ic_graph(pred_label, show_notebook=False)[0]
-                print("IC分析图表... Done")
-
-            print("--- 可视化图表生成完毕 ---")
-
+            ic_series_for_graph = pred_label.groupby("datetime").apply(lambda df: df["score"].corr(df["label"]))
+            print("--- IC图表数据准备完毕 ---")
 
     eval_log = log_stream.buffer if isinstance(log_stream, StreamlitLogHandler) else log_stream.getvalue()
     results = {
-        "signal": signal_report,
-        "portfolio": portfolio_report,
-        "report_figure": report_figure,
-        "ic_figure": ic_figure
+        "signal_report": signal_report,
+        "portfolio_report": portfolio_report,
+        "daily_report": daily_report_for_graph,
+        "ic_series": ic_series_for_graph,
     }
     return results, eval_log

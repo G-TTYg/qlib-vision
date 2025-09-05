@@ -643,43 +643,51 @@ def model_evaluation_page():
     if st.session_state.eval_results:
         st.success("模型评估完成！")
 
-        # Unpack results
+        # ARCHITECTURAL REFACTOR:
+        # The `evaluate_model` function now returns pure data. The frontend (this page)
+        # is responsible for creating the plots from that data. This separates concerns
+        # and makes the code cleaner and more consistent with other pages.
         results = st.session_state.eval_results
-        signal_report = results["signal"]
-        portfolio_report = results["portfolio"]
-        report_figure = results.get("report_figure") # Use .get for graceful failure
-        ic_figure = results.get("ic_figure")
+        signal_report_df = results["signal_report"]
+        portfolio_report_df = results["portfolio_report"]
+        daily_report_df = results["daily_report"]
+        ic_series_df = results["ic_series"]
 
         # Create tabs for results
         tab1, tab2 = st.tabs(["图表分析 (Visualizations)", "详细数据 (Data Tables)"])
 
         with tab1:
             st.subheader("投资组合分析 (Portfolio Analysis)")
-            if report_figure:
-                st.plotly_chart(report_figure, use_container_width=True)
-            else:
-                st.warning("未能生成投资组合分析图表。")
+            # Create portfolio graph from daily report data
+            fig_portfolio = px.line(daily_report_df, x=daily_report_df.index, y=['account', 'bench'], title="策略 vs. 基准 (Portfolio vs. Benchmark)")
+            st.plotly_chart(fig_portfolio, use_container_width=True)
 
             st.subheader("IC 分析 (IC Analysis)")
-            if ic_figure:
-                st.plotly_chart(ic_figure, use_container_width=True)
+            # Create IC graph from IC series data
+            if ic_series_df.dropna().empty:
+                st.warning("未能生成IC分析图表 (无有效数据)。")
             else:
-                st.warning("未能生成IC分析图表。")
+                fig_ic = px.bar(ic_series_df, x=ic_series_df.index, y=ic_series_df.columns[0], title="每日IC (Daily IC)")
+                st.plotly_chart(fig_ic, use_container_width=True)
+
 
         with tab2:
             st.subheader("1. 信号分析 (Signal Analysis)")
-            st.dataframe(signal_report)
+            st.dataframe(signal_report_df)
 
             st.subheader("2. 组合分析 (Portfolio Analysis)")
             st.markdown("**关键绩效指标 (KPIs)**")
-            metrics = portfolio_report.loc["excess_return_with_cost"]
+            # NOTE: The portfolio_report_df from the new API has a different structure
+            metrics = portfolio_report_df.loc[("excess_return_with_cost", "risk")]
             kpi_cols = st.columns(4)
-            kpi_cols[0].metric("年化收益率", f"{metrics['annualized_return']:.2%}")
-            kpi_cols[1].metric("夏普比率", f"{metrics['information_ratio']:.2f}")
-            kpi_cols[2].metric("最大回撤", f"{metrics['max_drawdown']:.2%}")
-            kpi_cols[3].metric("换手率", f"{metrics['turnover_rate']:.2f}")
+            kpi_cols[0].metric("年化收益率 (Annualized Return)", f"{metrics['annualized_return']:.2%}")
+            kpi_cols[1].metric("信息比率 (Information Ratio)", f"{metrics['information_ratio']:.2f}")
+            kpi_cols[2].metric("最大回撤 (Max Drawdown)", f"{metrics['max_drawdown']:.2%}")
+            # The new report does not contain turnover_rate directly, so we omit it for now.
+            # A more advanced implementation could calculate it from the position artifacts.
+            # kpi_cols[3].metric("换手率", f"{metrics['turnover_rate']:.2f}")
             st.markdown("**详细回测报告**")
-            st.dataframe(portfolio_report)
+            st.dataframe(portfolio_report_df)
 
 def main():
     st.set_page_config(layout="wide", page_title="Qlib 可视化工具")
