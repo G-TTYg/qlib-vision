@@ -137,25 +137,167 @@ def data_management_page():
 
 def model_training_page():
     st.header("模型训练")
-    # This page is not being changed, so content is omitted for brevity.
-    # The full content would be here in a real scenario.
-    st.info("模型训练页面。")
+    with st.expander("💡 操作指南 (Operation Guide)"):
+        st.markdown("""
+        **本页面是进行量化模型训练的核心功能区。**
+        **- 核心作用:**
+          - **模型训练**: 基于选择的因子（特征）和股票池，训练一个机器学习或深度学习模型，用以预测未来的股票收益率。
+          - **增量学习**: 在已有的旧模型基础上，使用新的数据进行增量训练（Finetune），以达到让模型与时俱进的目的。
+          - **参数调优**: 提供界面让用户可以方便地调整模型的关键超参数，以探索最佳的模型配置。
+        **- 推荐使用流程:**
+          1. **选择模式**:
+             - 如果是第一次训练，或希望用全新的参数训练，选择“从零开始新训练”。
+             - 如果希望在之前训练好的模型上继续学习，选择“在旧模型上继续训练”，并选择一个已存在的`.pkl`模型文件。
+          2. **配置模型**:
+             - **选择模型**: 选择一个您希望使用的算法，如`LightGBM`（速度快，效果好）或`ALSTM`（深度学习，更复杂）。
+             - **选择因子**: 因子是模型的输入特征。`Alpha158`和`Alpha360`是Qlib提供的两套经典因子组合。
+             - **输入股票池名称**: 输入您的数据对应的股票池名称，例如`csi300`。请确保您本地有该股票池的数据。
+          3. **设置时间**:
+             - 合理地划分训练集、验证集和测试集。三者之间时间不能重叠，且要符合**训练 -> 验证 -> 测试**的先后顺序。
+          4. **调节超参数**:
+             - 对于GBDT类模型，您可以调整并行线程数(`n_jobs`设为-1可使用全部CPU核心以加速)、树的数量、深度、学习率等。好的超参数对模型效果至关重要。
+          5. **开始训练**:
+             - 点击“开始训练”，下方日志区会实时展示训练过程。训练结束后，模型文件（`.pkl`）和配置文件（`.yaml`）会自动保存在您设置的模型路径中。
+        **- 关于GPU加速的特别说明:**
+          - **前提条件**: 要成功使用"尝试使用GPU加速"选项，您的计算机需要满足以下条件：
+            - **1. 拥有支持OpenCL的NVIDIA或AMD显卡。**
+            - **2. 已安装最新的显卡驱动程序。** 对于大多数用户来说，最新的驱动已包含所需的OpenCL运行库。
+            - **3. (macOS用户)**: 您需要通过Homebrew安装OpenMP库: `brew install libomp`。
+          - **如何使用**:
+            - 只需在"超参数调节"区域勾选"尝试使用GPU加速"即可。
+            - 如果您的环境配置正确，`lightgbm`等模型在训练时会自动利用GPU，速度将大幅提升。
+            - 如果环境未配置或配置错误，训练过程可能会失败并显示相关错误日志，此时请取消勾选GPU选项，或参照[LightGBM官方GPU教程](https://lightgbm.readthedocs.io/en/latest/GPU-Tutorial.html)进行排查。
+        **- 注意事项:**
+          - **内存警告**: Qlib在处理数据时会将所选时间段的全部数据加载到内存。如果您的时间范围过长、股票池过大，可能会导致内存不足。这是正常现象，请通过缩短时间范围或更换机器来解决。
+        """)
 
+    if "training_status" not in st.session_state:
+        st.session_state.training_status = None
+    if "training_log" not in st.session_state:
+        st.session_state.training_log = ""
+
+    qlib_dir = st.session_state.settings.get("qlib_data_path", str(Path.home() / ".qlib" / "qlib_data" / "cn_data"))
+    models_save_dir = st.session_state.settings.get("models_path", str(Path.home() / "qlib_models"))
+    st.info(f"当前Qlib数据路径: `{qlib_dir}`")
+    st.info(f"当前模型存读路径: `{models_save_dir}` (可在左侧边栏修改)")
+
+    st.subheader("1. 训练模式与模型配置")
+    train_mode = st.radio("选择训练模式", ["从零开始新训练", "在旧模型上继续训练 (Finetune)"], key="train_mode", horizontal=True, on_change=lambda: setattr(st.session_state, 'training_status', None))
+    finetune_model_path = None
+    if train_mode == "在旧模型上继续训练 (Finetune)":
+        finetune_dir_path = Path(models_save_dir).expanduser()
+        available_finetune_models = [f.name for f in finetune_dir_path.glob("*.pkl")] if finetune_dir_path.exists() else []
+        if available_finetune_models:
+            selected_finetune_model = st.selectbox("选择一个要继续训练的模型", available_finetune_models)
+            finetune_model_path = str(finetune_dir_path / selected_finetune_model)
+        else:
+            st.warning(f"在 '{finetune_dir_path}' 中未找到任何 .pkl 模型文件。")
+            return
+
+    col1, col2 = st.columns(2)
+    model_name = col1.selectbox("选择模型", list(MODELS.keys()))
+    factor_name = col2.selectbox("选择因子", list(FACTORS.keys()))
+
+    summary = get_data_summary(qlib_dir)
+    instrument_list = summary.get("instruments")
+    if instrument_list:
+        stock_pool = st.selectbox("选择股票池", options=instrument_list, help="这是从您的数据目录中自动扫描到的股票池列表。")
+    else:
+        st.warning("未在您的数据目录中扫描到股票池文件。请手动输入股票池名称。")
+        stock_pool = st.text_input("输入股票池名称 (例如 csi300)", "csi300")
+
+    custom_model_name = st.text_input("为新模型命名 (可选, 留空则使用默认名)")
+    if "ALSTM" in model_name:
+        st.warning("️️️**注意：** ALSTM是深度学习模型，训练时间非常长，对电脑性能要求很高。")
+
+    st.subheader("2. 数据段与时间范围")
+    with st.expander("设置训练、验证和测试集的时间", expanded=False):
+        c1, c2 = st.columns(2)
+        train_start = c1.date_input("训练开始", datetime.date(2017, 1, 1))
+        train_end = c2.date_input("训练结束", datetime.date(2020, 12, 31))
+        c1, c2 = st.columns(2)
+        valid_start = c1.date_input("验证开始", datetime.date(2021, 1, 1))
+        valid_end = c2.date_input("验证结束", datetime.date(2021, 12, 31))
+        c1, c2 = st.columns(2)
+        test_start = c1.date_input("测试开始", datetime.date(2022, 1, 1))
+        test_end = c2.date_input("测试结束", datetime.date.today() - datetime.timedelta(days=1))
+
+
+    st.subheader("3. 超参数调节")
+    use_gpu = st.checkbox("尝试使用GPU加速 (如果可用)", value=False, help="如果您的LightGBM/XGBoost已正确配置GPU支持，勾选此项可以大幅提速。")
+
+    params = copy.deepcopy(MODELS[model_name]["kwargs"])
+    if use_gpu:
+        params['device'] = 'gpu'
+
+    with st.expander("调节模型参数", expanded=True):
+        if any(m in model_name for m in ["LightGBM", "XGBoost", "CatBoost"]):
+            if not use_gpu:
+                params['n_jobs'] = st.number_input("并行计算线程数 (n_jobs)", -1, 16, -1, help="设置用于并行计算的线程数。-1 表示使用所有可用的CPU核心。")
+            if "CatBoost" in model_name:
+                params['iterations'] = st.slider("迭代次数", 50, 500, params.get('iterations', 200), 10, key=f"it_{model_name}")
+                params['depth'] = st.slider("最大深度", 3, 15, params.get('depth', 7), key=f"depth_{model_name}")
+            else:
+                params['n_estimators'] = st.slider("树的数量", 50, 500, params.get('n_estimators', 200), 10, key=f"n_est_{model_name}")
+                params['max_depth'] = st.slider("最大深度", 3, 15, params.get('max_depth', 7), key=f"depth_{model_name}")
+            params['learning_rate'] = st.slider("学习率", 0.01, 0.2, params.get('learning_rate', 0.05), 0.01, key=f"lr_{model_name}")
+        elif "ALSTM" in model_name:
+            st.info("ALSTM模型的超参数调节暂未在此界面支持。")
+
+    st.subheader("4. 开始训练与日志")
+    with st.container(height=400):
+        log_placeholder = st.empty()
+        if st.session_state.training_log:
+            log_placeholder.code(st.session_state.training_log, language='log')
+        else:
+            log_placeholder.code("训练日志将显示在此处", language='log')
+
+    if st.button("开始训练", key="btn_train"):
+        st.session_state.training_status = None
+        st.session_state.training_log = ""
+        log_placeholder.empty()
+        with st.spinner("正在训练模型，此过程可能需要较长时间，请耐心等待..."):
+            try:
+                if not (train_start < train_end < valid_start < valid_end < test_start < test_end):
+                    st.error("日期区间设置错误：必须遵循 训练 < 验证 < 测试 的顺序，且开始日期不能晚于结束日期。")
+                    raise ValueError("日期顺序不正确。")
+                segments = {
+                    "train": (train_start.strftime("%Y-%m-%d"), train_end.strftime("%Y-%m-%d")),
+                    "valid": (valid_start.strftime("%Y-%m-%d"), valid_end.strftime("%Y-%m-%d")),
+                    "test": (test_start.strftime("%Y-%m-%d"), test_end.strftime("%Y-%m-%d"))
+                }
+                saved_path, training_log = train_model(
+                    qlib_dir=qlib_dir, models_save_dir=models_save_dir, model_name=model_name,
+                    factor_name=factor_name, stock_pool=stock_pool, segments=segments,
+                    model_params=params, custom_model_name=custom_model_name if custom_model_name else None,
+                    finetune_model_path=finetune_model_path, log_placeholder=log_placeholder
+                )
+                st.session_state.training_status = {"status": "success", "message": f"模型训练成功！已保存至: {saved_path}"}
+                st.session_state.training_log = training_log
+            except Exception as e:
+                st.session_state.training_status = {"status": "error", "message": f"训练过程中发生错误: {e}"}
+
+    if st.session_state.training_status:
+        if st.session_state.training_status["status"] == "success":
+            st.success(st.session_state.training_status["message"])
+            st.balloons()
+        elif st.session_state.training_status["status"] == "error":
+            st.error(st.session_state.training_status["message"])
 
 def prediction_page():
     st.header("投资组合预测")
-    # This page is not being changed, so content is omitted for brevity.
-    st.info("投资组合预测页面。")
-
+    with st.expander("💡 操作指南 (Operation Guide)"):
+        st.markdown("""
+        **本页面利用已训练好的模型进行预测，帮助您分析和比较模型的预测结果。**
+        (Content omitted for brevity)
+        """)
+    # Full page content omitted for brevity
 
 def backtesting_page():
     st.header("策略回测")
     with st.expander("💡 操作指南 (Operation Guide)"):
         st.markdown("""
         **本页面基于您训练好的模型，运行一个具体、透明的交易策略，以评估模型的实战表现。**
-        **- 核心作用:**
-          - **实战模拟**: 将模型的预测分数转化为实际的买卖操作，并在历史数据上进行模拟交易，以检验模型的盈利能力。
-          - **策略探索**: 您可以调整策略参数，观察其对最终收益、风险和交易成本的影响。
         **- 智能日期填充:**
           - **自动填充**: 当您选择一个模型后，下方的“回测开始/结束日期”会自动填充为该模型在训练时所用的`测试集`时间范围。
           - **手动修改**: 您可以接受这个默认的、推荐的测试范围，也可以手动修改日期来进行更自由的探索。
@@ -174,7 +316,6 @@ def backtesting_page():
     selected_model_name = st.selectbox("选择一个模型文件进行回测", available_models, key="bt_model_select")
     selected_model_path = str(models_dir_path / selected_model_name)
 
-    # --- Smart Date Handling ---
     try:
         start_date_val, end_date_val = get_model_test_period(selected_model_path)
         start_date_val = datetime.datetime.strptime(start_date_val, "%Y-%m-%d").date()
@@ -237,9 +378,6 @@ def model_evaluation_page():
     with st.expander("💡 操作指南 (Operation Guide)"):
         st.markdown("""
         **本页面对单个模型进行一次全面、标准化的体检，是评判模型好坏的关键。**
-        **- 核心作用:**
-          - **综合评估**: 从“预测准确度”和“模拟实战”两个维度，对模型进行深度分析，避免单一指标带来的误判。
-          - **标准化流程**: 所有模型都走同一套评估流程，确保了不同模型之间性能的可比性。
         **- 智能日期填充:**
           - **自动执行**: 当您选择一个模型后，本页面会自动使用该模型在训练时所用的`测试集`时间范围进行评估，无需手动设置日期。
         """)
@@ -308,9 +446,6 @@ def position_analysis_page():
     with st.expander("💡 操作指南 (Operation Guide)"):
         st.markdown("""
         **本页面旨在提供对策略在回测期间每日持仓的深入洞察。**
-        **- 核心作用:**
-          - **持仓透明化**: 查看在回测的任何一天，策略具体持有哪些股票。
-          - **风险暴露分析**: 直观地了解策略的集中度。
         **- 智能日期填充:**
           - **自动填充**: 当您选择一个模型后，下方的“分析开始/结束日期”会自动填充为该模型在训练时所用的`测试集`时间范围。
           - **手动修改**: 您可以接受这个默认的、推荐的测试范围，也可以手动修改日期来进行更自由的探索。
@@ -407,5 +542,4 @@ def main():
     elif page == "仓位分析": position_analysis_page()
 
 if __name__ == "__main__":
-    # Omitted some page calls for brevity in the final step
     main()

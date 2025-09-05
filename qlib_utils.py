@@ -413,7 +413,12 @@ def get_position_analysis(model_path_str: str, qlib_dir: str, start_time: str, e
     config["dataset"]["kwargs"]["segments"] = {"test": (start_time, end_time)}
     dataset = init_instance_by_config(config["dataset"])
     strategy = TopkDropoutStrategy(model=model, dataset=dataset, **strategy_kwargs)
-    report_df, positions_df = backtest_daily(start_time=start_time, end_time=end_time, strategy=strategy, exchange_kwargs=exchange_kwargs)
+    report_df, positions_df = backtest_daily(
+        start_time=start_time,
+        end_time=end_time,
+        strategy=strategy,
+        exchange_kwargs=exchange_kwargs
+    )
     analysis_df = risk_analysis(report_df["return"] - report_df["bench"] - report_df["cost"])
     risk_figs = qcr.analysis_position.risk_analysis_graph(pd.DataFrame(analysis_df).T, report_df, show_notebook=False)
     results = {
