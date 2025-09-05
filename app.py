@@ -579,6 +579,7 @@ def model_evaluation_page():
               - `annualized_return` (年化收益率): 策略的年化收益水平。
               - `information_ratio` (信息比率): 策略的超额收益（相对于基准）与其波动性的比率，是衡量主动投资管理能力的核心指标（类似夏普比率）。
               - `max_drawdown` (最大回撤): 策略历史上从最高点回落到最低点的最大幅度，是衡量风险的重要指标。
+              - `turnover_rate` (换手率): 衡量交易的频繁程度。过高的换手率会侵蚀利润。
         **- 操作流程:**
           1. 从下拉框中选择一个您已经训练好的模型。
           2. 点击“开始评估”，等待几分钟，下方会生成两份详细的报告。
@@ -618,63 +619,60 @@ def model_evaluation_page():
             with st.spinner("正在执行评估，这可能需要几分钟时间..."):
                 try:
                     model_path = str(models_dir_path / selected_model_name)
-                    # The new `evaluate_model` is called here
                     results, eval_log = evaluate_model(model_path, qlib_dir, log_placeholder=log_placeholder)
                     st.session_state.eval_results = results
                     st.session_state.evaluation_log = eval_log
                     log_placeholder.code(eval_log, language='log') # Display final log
                 except Exception as e:
                     st.error(f"评估过程中发生错误: {e}")
-                    # The log placeholder already contains the error details from the logger
                     st.session_state.eval_results = None
 
     if st.session_state.eval_results:
         st.success("模型评估完成！")
 
         results = st.session_state.eval_results
-        signal_report_df = results["signal_report"]
-        portfolio_report_df = results["portfolio_report"]
-        daily_report_df = results["daily_report"]
-        ic_series_df = results["ic_series"]
+
+        # Unpack the results from the new backend
+        signal_figs = results.get("signal_figures", [])
+        portfolio_figs = results.get("portfolio_figures", [])
+        risk_analysis_table = results.get("risk_analysis_table")
+        raw_report_df = results.get("raw_report_df")
 
         # Create tabs for results
         tab1, tab2 = st.tabs(["图表分析 (Visualizations)", "详细数据 (Data Tables)"])
 
         with tab1:
             st.subheader("投资组合分析 (Portfolio Analysis)")
-            fig_portfolio = px.line(daily_report_df, x=daily_report_df.index, y=['account', 'bench'], title="策略 vs. 基准 (Portfolio vs. Benchmark)")
-            st.plotly_chart(fig_portfolio, use_container_width=True)
+            for fig in portfolio_figs:
+                st.plotly_chart(fig, use_container_width=True)
 
-            st.subheader("IC 分析 (IC Analysis)")
-            if ic_series_df.dropna().empty:
-                st.warning("未能生成IC分析图表 (无有效数据)。")
-            else:
-                # The IC series is a pd.Series, so we don't need to specify columns
-                fig_ic = px.bar(ic_series_df, title="每日IC (Daily IC)")
-                fig_ic.update_layout(showlegend=False)
-                st.plotly_chart(fig_ic, use_container_width=True)
+            st.subheader("信号分析 (Signal Analysis)")
+            for fig in signal_figs:
+                st.plotly_chart(fig, use_container_width=True)
 
         with tab2:
-            st.subheader("1. 信号分析 (Signal Analysis)")
-            st.dataframe(signal_report_df)
+            st.subheader("投资组合分析报告")
+            if risk_analysis_table is not None:
+                st.markdown("**关键绩效指标 (KPIs)**")
+                try:
+                    metrics = risk_analysis_table.loc["excess_return_with_cost"]
+                    kpi_cols = st.columns(4)
+                    kpi_cols[0].metric("年化收益率 (Annualized Return)", f"{metrics['annualized_return']:.2%}")
+                    kpi_cols[1].metric("信息比率 (Information Ratio)", f"{metrics['information_ratio']:.2f}")
+                    kpi_cols[2].metric("最大回撤 (Max Drawdown)", f"{metrics['max_drawdown']:.2%}")
+                    turnover = raw_report_df['turnover'].mean() if raw_report_df is not None else 0.0
+                    kpi_cols[3].metric("平均换手率 (Avg. Turnover)", f"{turnover:.3f}")
+                except KeyError:
+                    st.warning("无法从报告中提取部分关键绩效指标。")
 
-            st.subheader("2. 组合分析 (Portfolio Analysis)")
-            st.markdown("**关键绩效指标 (KPIs)**")
-            # The new portfolio_report_df has a slightly different structure
-            try:
-                metrics = portfolio_report_df.loc["excess_return_with_cost"]
-                kpi_cols = st.columns(4)
-                kpi_cols[0].metric("年化收益率 (Annualized Return)", f"{metrics['annualized_return']:.2%}")
-                kpi_cols[1].metric("信息比率 (Information Ratio)", f"{metrics['information_ratio']:.2f}")
-                kpi_cols[2].metric("最大回撤 (Max Drawdown)", f"{metrics['max_drawdown']:.2%}")
-                # The turnover_rate is available in the daily_report_df
-                turnover = daily_report_df['turnover'].mean()
-                kpi_cols[3].metric("平均换手率 (Avg. Turnover)", f"{turnover:.3f}")
-            except KeyError:
-                st.warning("无法从报告中提取部分关键绩效指标。")
+                st.markdown("**详细风险评估**")
+                st.dataframe(risk_analysis_table)
+            else:
+                st.warning("未能生成投资组合分析报告。")
 
-            st.markdown("**详细回测报告**")
-            st.dataframe(portfolio_report_df)
+            if raw_report_df is not None:
+                with st.expander("查看每日收益和换手率的原始数据"):
+                    st.dataframe(raw_report_df)
 
 def main():
     st.set_page_config(layout="wide", page_title="Qlib 可视化工具")

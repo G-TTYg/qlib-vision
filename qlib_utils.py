@@ -321,63 +321,37 @@ def predict(model_path_str: str, qlib_dir: str, prediction_date: str):
     return prediction.sort_values(by="score", ascending=False)
 
 def backtest_strategy(model_path_str: str, qlib_dir: str, start_time: str, end_time: str, strategy_kwargs: dict, exchange_kwargs: dict):
-    """
-    Performs backtesting using a Top-K Dropout strategy and returns the results.
-    This function is now a lightweight wrapper around `run_backtest_and_analysis`.
-    """
     import qlib
     from qlib.utils import init_instance_by_config
     from qlib.contrib.strategy import TopkDropoutStrategy
+    from qlib.contrib.evaluate import backtest_daily, risk_analysis
     qlib.auto_init(provider_uri=qlib_dir)
 
-    # Load model and config
     model_path = Path(model_path_str)
     config_path = model_path.with_suffix(".yaml")
     if not config_path.exists():
         raise FileNotFoundError(f"Config file {config_path} not found for model {model_path.name}")
     with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
+        config = yaml.load(f, Loader=yaml.FullLoader)
     model = Model.load(model_path)
-
-    # Prepare dataset for the backtest period
     config["dataset"]["kwargs"]["handler"]["kwargs"]["start_time"] = start_time
     config["dataset"]["kwargs"]["handler"]["kwargs"]["end_time"] = end_time
-    config["dataset"]["kwargs"]["segments"] = {"test": (start_time, end_time)}
+    config["dataset"]["kwargs"]["segments"]["test"] = (start_time, end_time)
     dataset = init_instance_by_config(config["dataset"])
-
-    # Instantiate strategy
     strategy = TopkDropoutStrategy(model=model, dataset=dataset, **strategy_kwargs)
 
-    # Run the core backtest and analysis logic
-    daily_report_df, analysis_df = run_backtest_and_analysis(
-        start_time=start_time,
-        end_time=end_time,
-        strategy=strategy,
-        exchange_kwargs=exchange_kwargs
-    )
+    # The backtest_daily function now primarily returns the daily portfolio results
+    report_df, _ = backtest_daily(start_time=start_time, end_time=end_time, strategy=strategy, exchange_kwargs=exchange_kwargs)
 
-    return daily_report_df, analysis_df
-
-def run_backtest_and_analysis(start_time, end_time, strategy, exchange_kwargs):
-    """
-    The core backtesting and analysis logic, extracted for reusability.
-    """
-    from qlib.contrib.evaluate import backtest_daily, risk_analysis
-
-    # Run the daily backtest
-    report_df, _ = backtest_daily(
-        start_time=start_time,
-        end_time=end_time,
-        strategy=strategy,
-        exchange_kwargs=exchange_kwargs
-    )
-
-    # Perform risk analysis on the results
+    # We need to manually calculate the analysis metrics using risk_analysis
     analysis = dict()
     analysis["excess_return_without_cost"] = risk_analysis(report_df["return"] - report_df["bench"])
     analysis["excess_return_with_cost"] = risk_analysis(report_df["return"] - report_df["bench"] - report_df["cost"])
+    analysis["return"] = risk_analysis(report_df["return"])
+
     analysis_df = pd.concat(analysis)  # This will be a DataFrame with metrics
 
+    # Return both the daily report for plotting and the analysis report for metrics
     return report_df, analysis_df
 
 def get_historical_prediction(model_path_str: str, qlib_dir: str, stock_id: str, start_date: str, end_date: str, placeholder=None):
@@ -427,19 +401,20 @@ def get_model_info(model_path_str: str):
 
     return info
 
-
 def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
     """
-    Evaluates a model by performing both Signal Analysis and Portfolio Analysis,
-    using the simplified, high-level qlib APIs as requested.
+    Evaluates a model using the high-level functions from `qlib.contrib.report`
+    as requested by the user. This function now generates Plotly figures directly.
     """
     import qlib
     from qlib.utils import init_instance_by_config
     from qlib.contrib.strategy import TopkDropoutStrategy
+    from qlib.contrib.evaluate import backtest_daily, risk_analysis
+    import qlib.contrib.report as qcr
 
     log_stream = StreamlitLogHandler(log_placeholder) if log_placeholder else io.StringIO()
     with redirect_stdout(log_stream), redirect_stderr(log_stream):
-        print("--- 模型评估开始 ---")
+        print("--- 模型评估开始 (使用 qlib.contrib.report) ---")
         qlib.auto_init(provider_uri=qlib_dir)
 
         # --- 1. Load Model, Config, and Dataset ---
@@ -455,67 +430,55 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
         test_period = config["dataset"]["kwargs"]["segments"]["test"]
         print(f"模型和配置已加载。测试期: {test_period[0]} to {test_period[1]}")
 
-        # --- 2. Portfolio Analysis (Backtesting) ---
-        print("\n--- [1/2] 开始投资组合分析 (Portfolio Analysis) ---")
-        strategy_kwargs = {"topk": 50, "n_drop": 5}
-        exchange_kwargs = {"open_cost": 0.0005, "close_cost": 0.0015, "min_cost": 5, "deal_price": "close"}
-
-        strategy_for_eval = TopkDropoutStrategy(model=model, dataset=dataset, **strategy_kwargs)
-
-        daily_report_df, portfolio_report_df = run_backtest_and_analysis(
-            start_time=test_period[0],
-            end_time=test_period[1],
-            strategy=strategy_for_eval,
-            exchange_kwargs=exchange_kwargs
-        )
-        print("--- 投资组合分析完成 ---")
-
-        # --- 3. Signal Analysis (IC Calculation) ---
-        print("\n--- [2/2] 开始信号分析 (Signal Analysis) ---")
-        # This is the critical step that caused the merge error before.
-        # We must carefully align the prediction and the label.
-
+        # --- 2. Prepare pred_label DataFrame (Critical for fixing the bug) ---
+        print("\n--- [1/3] 准备预测数据 (pred_label) ---")
         # Get predictions
         prediction_df = model.predict(dataset, segment="test")
-        if not isinstance(prediction_df.index, pd.MultiIndex):
-             prediction_df = prediction_df.set_index(["datetime", "instrument"])
-
-        # Get labels
-        # IMPORTANT: We need `drop_raw=False` to get the 'label' column.
-        # We create a temporary, modified dataset config for this purpose.
+        # Get labels by creating a temporary dataset that includes them
         label_dataset_config = copy.deepcopy(config["dataset"])
         label_dataset_config["kwargs"]["handler"]["kwargs"]["drop_raw"] = False
         label_dataset = init_instance_by_config(label_dataset_config)
-
-        # Prepare the test segment data including the label
         pred_label_df = label_dataset.prepare("test", col_set=["label"])
+        # JOINING: This is where the original error occurred.
+        # We ensure both have a MultiIndex before joining.
+        if not isinstance(prediction_df.index, pd.MultiIndex):
+            prediction_df = prediction_df.set_index(["datetime", "instrument"])
+        pred_label_df = pred_label_df.join(prediction_df, how="inner").dropna()
+        print("预测数据准备完成。")
 
-        # Join predictions and labels. This is where the error occurred.
-        # Both DataFrames must have the same MultiIndex (datetime, instrument).
-        pred_label_df = pred_label_df.join(prediction_df, how="inner")
-        pred_label_df.dropna(inplace=True)
+        # --- 3. Generate Signal Analysis Figures ---
+        print("\n--- [2/3] 生成信号分析报告 ---")
+        # Use the high-level reporting function as requested
+        signal_figs = qcr.analysis_model.model_performance_graph(
+            pred_label_df, show_notebook=False
+        )
+        print("信号分析报告生成完毕。")
 
-        # Calculate IC and Rank IC
-        ic_series = pred_label_df.groupby("datetime").apply(lambda df: df["score"].corr(df["label"]))
-        rank_ic_series = pred_label_df.groupby("datetime").apply(lambda df: df["score"].corr(df["label"], method="spearman"))
+        # --- 4. Generate Portfolio Analysis Figures & Report ---
+        print("\n--- [3/3] 生成投资组合分析报告 ---")
+        strategy_kwargs = {"topk": 50, "n_drop": 5, "signal": prediction_df}
+        strategy_for_eval = TopkDropoutStrategy(**strategy_kwargs)
+        # Run backtest to get the daily report dataframe
+        report_df, _ = backtest_daily(
+            start_time=test_period[0], end_time=test_period[1], strategy=strategy_for_eval
+        )
+        # Generate the portfolio graph
+        portfolio_figs = qcr.analysis_position.report_graph(report_df, show_notebook=False)
 
-        metrics = {
-            "IC": ic_series.mean(),
-            "ICIR": ic_series.mean() / ic_series.std(),
-            "Rank IC": rank_ic_series.mean(),
-            "Rank ICIR": rank_ic_series.mean() / rank_ic_series.std(),
-        }
-        signal_report_df = pd.DataFrame.from_dict(metrics, orient="index", columns=["value"])
-        print("--- 信号分析完成 ---")
+        # Generate the risk analysis table
+        analysis = dict()
+        analysis["excess_return_with_cost"] = risk_analysis(report_df["return"] - report_df["bench"] - report_df["cost"])
+        analysis_df = pd.concat(analysis)
+        print("投资组合分析报告生成完毕。")
 
     eval_log = log_stream.getvalue()
 
     # Consolidate results into a dictionary for the frontend
     results = {
-        "signal_report": signal_report_df,
-        "portfolio_report": portfolio_report_df,
-        "daily_report": daily_report_df,
-        "ic_series": ic_series, # Pass the raw series for plotting
+        "signal_figures": signal_figs,
+        "portfolio_figures": portfolio_figs,
+        "risk_analysis_table": analysis_df,
+        "raw_report_df": report_df # For detailed view if needed
     }
 
     # Clean up memory
