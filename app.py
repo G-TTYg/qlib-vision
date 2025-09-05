@@ -552,14 +552,25 @@ def backtesting_page():
     if st.session_state.backtest_results:
         st.success("回测完成！")
         st.subheader("绩效指标")
-        # Metrics are now in the 'analysis' dataframe
+        # Metrics are now in the 'analysis' dataframe, and daily values in 'daily'
         analysis_df = st.session_state.backtest_results["analysis"]
-        metrics = analysis_df.loc["excess_return_with_cost"]
+        daily_df = st.session_state.backtest_results["daily"]
+
+        # The new risk_analysis returns a DataFrame with a 'risk' column.
+        # We select the metrics for 'excess_return_with_cost'.
+        metrics_with_cost = analysis_df.loc["excess_return_with_cost"]
+
+        # Turnover is in the daily report, so we calculate its mean.
+        turnover_rate = daily_df["turnover"].mean()
+
         kpi_cols = st.columns(4)
-        kpi_cols[0].metric("年化收益率", f"{metrics['annualized_return']:.2%}")
-        kpi_cols[1].metric("信息比率", f"{metrics['information_ratio']:.2f}")
-        kpi_cols[2].metric("最大回撤", f"{metrics['max_drawdown']:.2%}")
-        kpi_cols[3].metric("换手率", f"{metrics['turnover_rate']:.2f}")
+        # Access metrics by index from the selected metrics DataFrame.
+        # The KeyError was because 'annualized_return' is an index, not a column.
+        # The value is in the 'risk' column.
+        kpi_cols[0].metric("年化收益率", f"{metrics_with_cost.loc['annualized_return', 'risk']:.2%}")
+        kpi_cols[1].metric("信息比率", f"{metrics_with_cost.loc['information_ratio', 'risk']:.2f}")
+        kpi_cols[2].metric("最大回撤", f"{metrics_with_cost.loc['max_drawdown', 'risk']:.2%}")
+        kpi_cols[3].metric("换手率", f"{turnover_rate:.2f}")
 
         st.subheader("资金曲线")
         st.plotly_chart(st.session_state.backtest_results["fig"], use_container_width=True)

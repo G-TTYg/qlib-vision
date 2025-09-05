@@ -542,8 +542,14 @@ def get_position_analysis(model_path_str: str, qlib_dir: str, start_time: str, e
         exchange_kwargs=exchange_kwargs
     )
 
-    # Generate risk analysis dataframe and figures
-    analysis_df = risk_analysis(report_df["return"] - report_df["bench"] - report_df["cost"])
+    # Generate risk analysis dataframe and figures, similar to the backtesting page
+    analysis = dict()
+    analysis["excess_return_without_cost"] = risk_analysis(report_df["return"] - report_df["bench"])
+    analysis["excess_return_with_cost"] = risk_analysis(
+        report_df["return"] - report_df["bench"] - report_df["cost"]
+    )
+    analysis_df = pd.concat(analysis)  # Create a multi-index DataFrame as expected by the graphing function
+
     risk_figs = qcr.analysis_position.risk_analysis_graph(analysis_df, report_df, show_notebook=False)
 
     results = {
