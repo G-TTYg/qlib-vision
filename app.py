@@ -583,12 +583,21 @@ def backtesting_and_analysis_page():
 
         # --- Section 1: Key Performance Indicators ---
         st.subheader("关键绩效指标 (KPIs)")
-        metrics = analysis_df.loc["excess_return_with_cost"]
-        kpi_cols = st.columns(4)
-        kpi_cols[0].metric("年化收益率 (超额)", f"{metrics['annualized_return']:.2%}")
-        kpi_cols[1].metric("信息比率", f"{metrics['information_ratio']:.2f}")
-        kpi_cols[2].metric("最大回撤 (超额)", f"{metrics['max_drawdown']:.2%}")
-        kpi_cols[3].metric("换手率", f"{metrics['turnover_rate']:.2f}")
+        # Access metrics from the MultiIndex DataFrame.
+        # The first level of the index is the analysis type, the second is the metric name. The column is 'risk'.
+        try:
+            annualized_return = analysis_df.loc[('excess_return_with_cost', 'annualized_return'), 'risk']
+            information_ratio = analysis_df.loc[('excess_return_with_cost', 'information_ratio'), 'risk']
+            max_drawdown = analysis_df.loc[('excess_return_with_cost', 'max_drawdown'), 'risk']
+            turnover_rate = analysis_df.loc[('excess_return_with_cost', 'turnover_rate'), 'risk']
+
+            kpi_cols = st.columns(4)
+            kpi_cols[0].metric("年化收益率 (超额)", f"{annualized_return:.2%}")
+            kpi_cols[1].metric("信息比率", f"{information_ratio:.2f}")
+            kpi_cols[2].metric("最大回撤 (超额)", f"{max_drawdown:.2%}")
+            kpi_cols[3].metric("换手率", f"{turnover_rate:.2f}")
+        except KeyError:
+            st.warning("无法从分析报告中提取关键绩效指标。报告的格式可能不是预期的。")
 
         # --- Section 2: Equity Curve ---
         st.subheader("资金曲线")

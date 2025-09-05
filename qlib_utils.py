@@ -507,35 +507,30 @@ def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: st
         exchange_kwargs=exchange_kwargs
     )
 
-    # --- 3. Generate Performance Metrics (KPIs) ---
-    # This aligns with the logic in qlib.workflow.record_temp.PortAnaRecord
+    # --- 3. Generate Performance Metrics (KPIs) and Risk Figures ---
+    # This logic is now aligned with the official qlib documentation.
     analysis = dict()
-    analysis["excess_return_without_cost"] = risk_analysis(report_df["return"] - report_df["bench"])
-    analysis["excess_return_with_cost"] = risk_analysis(report_df["return"] - report_df["bench"] - report_df["cost"])
-    analysis["return_with_cost"] = risk_analysis(report_df["return"] - report_df["cost"])
+    analysis["excess_return_without_cost"] = risk_analysis(
+        report_df["return"] - report_df["bench"]
+    )
+    analysis["excess_return_with_cost"] = risk_analysis(
+        report_df["return"] - report_df["bench"] - report_df["cost"]
+    )
 
-    # The raw_analysis_df has a MultiIndex, which is the native qlib structure.
-    # It assumes risk_analysis() returns a DataFrame with a 'risk' column.
-    raw_analysis_df = pd.concat(analysis)
+    # pd.concat creates the MultiIndex DataFrame required by risk_analysis_graph
+    analysis_df = pd.concat(analysis)
 
-    # For the UI, we need a simpler DataFrame with metrics as columns. We unstack the inner level of the index.
-    analysis_df = raw_analysis_df["risk"].unstack(level=1)
+    # Generate the risk figures using the created analysis_df
+    risk_figures = analysis_position.risk_analysis_graph(analysis_df, report_df, show_notebook=False)
 
 
-    # --- 4. Generate Visualizations ---
-    # Main Equity Curve
+    # --- 4. Generate Main Equity Curve Visualization ---
     equity_curve_fig = px.line(
         report_df.rename(columns={'account': '策略', 'bench': '基准'}),
         x=report_df.index,
         y=['策略', '基准'],
         title="策略 vs. 基准 (扣除成本后)"
     )
-
-    # Risk Analysis Figures for positions
-    # Pass the original, single-column DataFrame from a single risk_analysis call to the graphing function.
-    # This is the most robust way to ensure the function gets the exact input format it expects.
-    risk_analysis_input_df = analysis["excess_return_with_cost"]
-    risk_figures = analysis_position.risk_analysis_graph(risk_analysis_input_df, report_df, show_notebook=False)
 
     # --- 5. Consolidate and Return Results ---
     results = {
