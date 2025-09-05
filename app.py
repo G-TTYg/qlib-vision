@@ -563,7 +563,7 @@ def backtesting_and_analysis_page():
             with st.spinner("正在执行回测与分析，此过程可能需要一些时间..."):
                 try:
                     results = run_backtest_and_analysis(
-                        model_path=selected_model_path,
+                        model_path_str=selected_model_path,
                         qlib_dir=qlib_dir,
                         start_time=start_date.strftime("%Y-%m-%d"),
                         end_time=end_date.strftime("%Y-%m-%d"),
