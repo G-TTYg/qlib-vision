@@ -581,45 +581,33 @@ def backtesting_and_analysis_page():
     if st.session_state.backtest_results:
         st.success("回测与分析完成！")
         results = st.session_state.backtest_results
-        analysis_df = results["analysis_df"]
         positions_df = results["positions_df"]
         equity_curve_fig = results["equity_curve_fig"]
-        risk_figures = results["risk_figures"]
+        kpi_figures = results.get("kpi_figures", []) # Use .get for backward compatibility
 
-        # --- Section 1: Key Performance Indicators ---
-        st.subheader("关键绩效指标 (KPIs)")
-        # Access metrics from the MultiIndex DataFrame.
-        # The first level of the index is the analysis type, the second is the metric name. The column is 'risk'.
-        try:
-            annualized_return = analysis_df.loc[('excess_return_with_cost', 'annualized_return'), 'risk']
-            information_ratio = analysis_df.loc[('excess_return_with_cost', 'information_ratio'), 'risk']
-            max_drawdown = analysis_df.loc[('excess_return_with_cost', 'max_drawdown'), 'risk']
-            turnover_rate = analysis_df.loc[('excess_return_with_cost', 'turnover_rate'), 'risk']
-
-            kpi_cols = st.columns(4)
-            kpi_cols[0].metric("年化收益率 (超额)", f"{annualized_return:.2%}")
-            kpi_cols[1].metric("信息比率", f"{information_ratio:.2f}")
-            kpi_cols[2].metric("最大回撤 (超额)", f"{max_drawdown:.2%}")
-            kpi_cols[3].metric("换手率", f"{turnover_rate:.2f}")
-        except KeyError:
-            st.warning("无法从分析报告中提取关键绩效指标。报告的格式可能不是预期的。")
-
-        equity_curve_fig = results["equity_curve_fig"]
-        risk_figures = results["risk_figures"]
-
-        # --- Section 2: Equity Curve ---
+        # --- Section 1: Equity Curve ---
         st.subheader("资金曲线")
         st.plotly_chart(equity_curve_fig, use_container_width=True)
 
-        # --- Section 3: Detailed Metrics ---
-        with st.expander("查看详细分析报告"):
-            st.dataframe(analysis_df)
+        # --- Section 2: Key Performance Indicators & Analysis ---
+        st.subheader("关键绩效指标与分析图")
+        if kpi_figures:
+            for fig in kpi_figures:
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("未能生成KPI图表。")
+            # Fallback to display old analysis dataframe if it exists
+            if "analysis_df" in results:
+                st.info("检测到旧版分析数据，将为您展示。请考虑重新运行回测以生成新版图表。")
+                st.dataframe(results["analysis_df"])
 
-        # --- Section 4: Position Analysis ---
-        st.subheader("持仓分析")
-        for fig in risk_figures:
-            st.plotly_chart(fig, use_container_width=True)
 
+        # --- Section 3: Detailed Backtest Report (Raw Data) ---
+        with st.expander("查看详细回测报告 (原始数据)"):
+            st.dataframe(results["report_df"])
+
+
+        # --- Section 4: Daily Positions ---
         with st.expander("查看每日详细持仓"):
             st.info("下表记录了回测期间每一天的详细持仓情况，包括每只股票的代码、持仓成本、当前价格和持仓权重。")
             # Robustly convert all object-type columns to strings to prevent pyarrow serialization errors.
