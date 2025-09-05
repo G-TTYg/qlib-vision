@@ -453,6 +453,10 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None, tes
         # Get labels (returns a DataFrame with MultiIndex) from the same dataset
         pred_label_df_raw = dataset.prepare("test", col_set="label")
 
+        # Qlib's default label name is not always 'label'. Rename it for compatibility.
+        if len(pred_label_df_raw.columns) == 1 and pred_label_df_raw.columns[0] != 'label':
+            pred_label_df_raw.rename(columns={pred_label_df_raw.columns[0]: 'label'}, inplace=True)
+
         # Defensive merging: reset index on both and merge on columns.
         # This is a robust way to avoid errors from incompatible indexes.
         pred_df_for_merge = prediction_df.reset_index()
