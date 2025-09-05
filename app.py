@@ -579,7 +579,6 @@ def model_evaluation_page():
               - `annualized_return` (年化收益率): 策略的年化收益水平。
               - `information_ratio` (信息比率): 策略的超额收益（相对于基准）与其波动性的比率，是衡量主动投资管理能力的核心指标（类似夏普比率）。
               - `max_drawdown` (最大回撤): 策略历史上从最高点回落到最低点的最大幅度，是衡量风险的重要指标。
-              - `turnover_rate` (换手率): 衡量交易的频繁程度。过高的换手率会侵蚀利润。
         **- 操作流程:**
           1. 从下拉框中选择一个您已经训练好的模型。
           2. 点击“开始评估”，等待几分钟，下方会生成两份详细的报告。
@@ -606,10 +605,7 @@ def model_evaluation_page():
     st.subheader("评估日志")
     with st.container(height=400):
         log_placeholder = st.empty()
-        if st.session_state.evaluation_log:
-            log_placeholder.code(st.session_state.evaluation_log, language='log')
-        else:
-            log_placeholder.code("评估日志将显示在此处", language='log')
+        log_placeholder.code("评估日志将显示在此处", language='log')
 
 
     if st.button("开始评估", key="btn_eval"):
@@ -622,21 +618,19 @@ def model_evaluation_page():
             with st.spinner("正在执行评估，这可能需要几分钟时间..."):
                 try:
                     model_path = str(models_dir_path / selected_model_name)
+                    # The new `evaluate_model` is called here
                     results, eval_log = evaluate_model(model_path, qlib_dir, log_placeholder=log_placeholder)
                     st.session_state.eval_results = results
                     st.session_state.evaluation_log = eval_log
+                    log_placeholder.code(eval_log, language='log') # Display final log
                 except Exception as e:
                     st.error(f"评估过程中发生错误: {e}")
-                    # The log placeholder already contains the error details
+                    # The log placeholder already contains the error details from the logger
                     st.session_state.eval_results = None
 
     if st.session_state.eval_results:
         st.success("模型评估完成！")
 
-        # ARCHITECTURAL REFACTOR:
-        # The `evaluate_model` function now returns pure data. The frontend (this page)
-        # is responsible for creating the plots from that data. This separates concerns
-        # and makes the code cleaner and more consistent with other pages.
         results = st.session_state.eval_results
         signal_report_df = results["signal_report"]
         portfolio_report_df = results["portfolio_report"]
@@ -648,33 +642,17 @@ def model_evaluation_page():
 
         with tab1:
             st.subheader("投资组合分析 (Portfolio Analysis)")
-            # Create portfolio graph from daily report data
             fig_portfolio = px.line(daily_report_df, x=daily_report_df.index, y=['account', 'bench'], title="策略 vs. 基准 (Portfolio vs. Benchmark)")
             st.plotly_chart(fig_portfolio, use_container_width=True)
-            st.download_button(
-                "下载投资组合每日数据 (Download Portfolio Daily Data)",
-                daily_report_df.to_csv(index=True).encode('utf-8'),
-                "portfolio_daily_report.csv",
-                "text/csv",
-                key='download-portfolio'
-            )
-
 
             st.subheader("IC 分析 (IC Analysis)")
-            # Create IC graph from IC series data
             if ic_series_df.dropna().empty:
                 st.warning("未能生成IC分析图表 (无有效数据)。")
             else:
-                fig_ic = px.bar(ic_series_df, x=ic_series_df.index, y=ic_series_df.columns[0], title="每日IC (Daily IC)")
+                # The IC series is a pd.Series, so we don't need to specify columns
+                fig_ic = px.bar(ic_series_df, title="每日IC (Daily IC)")
+                fig_ic.update_layout(showlegend=False)
                 st.plotly_chart(fig_ic, use_container_width=True)
-                st.download_button(
-                    "下载IC每日数据 (Download IC Daily Data)",
-                    ic_series_df.to_csv(index=True).encode('utf-8'),
-                    "ic_daily_series.csv",
-                    "text/csv",
-                    key='download-ic'
-                )
-
 
         with tab2:
             st.subheader("1. 信号分析 (Signal Analysis)")
@@ -682,15 +660,19 @@ def model_evaluation_page():
 
             st.subheader("2. 组合分析 (Portfolio Analysis)")
             st.markdown("**关键绩效指标 (KPIs)**")
-            # NOTE: The portfolio_report_df from the new API has a different structure
-            metrics = portfolio_report_df.loc[("excess_return_with_cost", "risk")]
-            kpi_cols = st.columns(4)
-            kpi_cols[0].metric("年化收益率 (Annualized Return)", f"{metrics['annualized_return']:.2%}")
-            kpi_cols[1].metric("信息比率 (Information Ratio)", f"{metrics['information_ratio']:.2f}")
-            kpi_cols[2].metric("最大回撤 (Max Drawdown)", f"{metrics['max_drawdown']:.2%}")
-            # The new report does not contain turnover_rate directly, so we omit it for now.
-            # A more advanced implementation could calculate it from the position artifacts.
-            # kpi_cols[3].metric("换手率", f"{metrics['turnover_rate']:.2f}")
+            # The new portfolio_report_df has a slightly different structure
+            try:
+                metrics = portfolio_report_df.loc["excess_return_with_cost"]
+                kpi_cols = st.columns(4)
+                kpi_cols[0].metric("年化收益率 (Annualized Return)", f"{metrics['annualized_return']:.2%}")
+                kpi_cols[1].metric("信息比率 (Information Ratio)", f"{metrics['information_ratio']:.2f}")
+                kpi_cols[2].metric("最大回撤 (Max Drawdown)", f"{metrics['max_drawdown']:.2%}")
+                # The turnover_rate is available in the daily_report_df
+                turnover = daily_report_df['turnover'].mean()
+                kpi_cols[3].metric("平均换手率 (Avg. Turnover)", f"{turnover:.3f}")
+            except KeyError:
+                st.warning("无法从报告中提取部分关键绩效指标。")
+
             st.markdown("**详细回测报告**")
             st.dataframe(portfolio_report_df)
 

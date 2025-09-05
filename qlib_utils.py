@@ -321,37 +321,63 @@ def predict(model_path_str: str, qlib_dir: str, prediction_date: str):
     return prediction.sort_values(by="score", ascending=False)
 
 def backtest_strategy(model_path_str: str, qlib_dir: str, start_time: str, end_time: str, strategy_kwargs: dict, exchange_kwargs: dict):
+    """
+    Performs backtesting using a Top-K Dropout strategy and returns the results.
+    This function is now a lightweight wrapper around `run_backtest_and_analysis`.
+    """
     import qlib
     from qlib.utils import init_instance_by_config
     from qlib.contrib.strategy import TopkDropoutStrategy
-    from qlib.contrib.evaluate import backtest_daily, risk_analysis
     qlib.auto_init(provider_uri=qlib_dir)
 
+    # Load model and config
     model_path = Path(model_path_str)
     config_path = model_path.with_suffix(".yaml")
     if not config_path.exists():
         raise FileNotFoundError(f"Config file {config_path} not found for model {model_path.name}")
     with open(config_path, 'r') as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
+        config = yaml.safe_load(f)
     model = Model.load(model_path)
+
+    # Prepare dataset for the backtest period
     config["dataset"]["kwargs"]["handler"]["kwargs"]["start_time"] = start_time
     config["dataset"]["kwargs"]["handler"]["kwargs"]["end_time"] = end_time
-    config["dataset"]["kwargs"]["segments"]["test"] = (start_time, end_time)
+    config["dataset"]["kwargs"]["segments"] = {"test": (start_time, end_time)}
     dataset = init_instance_by_config(config["dataset"])
+
+    # Instantiate strategy
     strategy = TopkDropoutStrategy(model=model, dataset=dataset, **strategy_kwargs)
 
-    # The backtest_daily function now primarily returns the daily portfolio results
-    report_df, _ = backtest_daily(start_time=start_time, end_time=end_time, strategy=strategy, exchange_kwargs=exchange_kwargs)
+    # Run the core backtest and analysis logic
+    daily_report_df, analysis_df = run_backtest_and_analysis(
+        start_time=start_time,
+        end_time=end_time,
+        strategy=strategy,
+        exchange_kwargs=exchange_kwargs
+    )
 
-    # We need to manually calculate the analysis metrics using risk_analysis
+    return daily_report_df, analysis_df
+
+def run_backtest_and_analysis(start_time, end_time, strategy, exchange_kwargs):
+    """
+    The core backtesting and analysis logic, extracted for reusability.
+    """
+    from qlib.contrib.evaluate import backtest_daily, risk_analysis
+
+    # Run the daily backtest
+    report_df, _ = backtest_daily(
+        start_time=start_time,
+        end_time=end_time,
+        strategy=strategy,
+        exchange_kwargs=exchange_kwargs
+    )
+
+    # Perform risk analysis on the results
     analysis = dict()
     analysis["excess_return_without_cost"] = risk_analysis(report_df["return"] - report_df["bench"])
     analysis["excess_return_with_cost"] = risk_analysis(report_df["return"] - report_df["bench"] - report_df["cost"])
-    analysis["return"] = risk_analysis(report_df["return"])
-
     analysis_df = pd.concat(analysis)  # This will be a DataFrame with metrics
 
-    # Return both the daily report for plotting and the analysis report for metrics
     return report_df, analysis_df
 
 def get_historical_prediction(model_path_str: str, qlib_dir: str, stock_id: str, start_date: str, end_date: str, placeholder=None):
@@ -404,95 +430,96 @@ def get_model_info(model_path_str: str):
 
 def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
     """
-    ARCHITECTURAL REFACTOR:
-    This function is now responsible ONLY for data processing. It runs the
-    evaluation and returns a dictionary of clean pandas DataFrames and Series.
-    All plotting logic has been moved to the frontend (`app.py`) as per
-    the user's suggestion for a cleaner separation of concerns.
+    Evaluates a model by performing both Signal Analysis and Portfolio Analysis,
+    using the simplified, high-level qlib APIs as requested.
     """
     import qlib
     from qlib.utils import init_instance_by_config
-    from qlib.workflow import R
-    from qlib.workflow.record_temp import SignalRecord, PortAnaRecord, SigAnaRecord
+    from qlib.contrib.strategy import TopkDropoutStrategy
 
     log_stream = StreamlitLogHandler(log_placeholder) if log_placeholder else io.StringIO()
     with redirect_stdout(log_stream), redirect_stderr(log_stream):
         print("--- 模型评估开始 ---")
         qlib.auto_init(provider_uri=qlib_dir)
 
+        # --- 1. Load Model, Config, and Dataset ---
         model_path = Path(model_path_str)
         config_path = model_path.with_suffix(".yaml")
         if not config_path.exists():
             raise FileNotFoundError(f"Config file {config_path} not found for model {model_path.name}")
         with open(config_path, "r") as f:
-            config = yaml.load(f, Loader=yaml.FullLoader)
+            config = yaml.safe_load(f)
 
         model = Model.load(model_path)
+        dataset = init_instance_by_config(config["dataset"])
+        test_period = config["dataset"]["kwargs"]["segments"]["test"]
+        print(f"模型和配置已加载。测试期: {test_period[0]} to {test_period[1]}")
 
-        # Per user feedback, the temporary dataset with `drop_raw=False` is necessary
-        # for the qlib.workflow.record_temp classes to generate all their artifacts (e.g., label).
-        print("为保证评估顺利进行，临时创建`drop_raw=False`的数据集...")
-        eval_dataset_config = copy.deepcopy(config["dataset"])
-        eval_dataset_config["kwargs"]["handler"]["kwargs"]["drop_raw"] = False
-        dataset_for_eval = init_instance_by_config(eval_dataset_config)
-        print("数据集创建成功。")
+        # --- 2. Portfolio Analysis (Backtesting) ---
+        print("\n--- [1/2] 开始投资组合分析 (Portfolio Analysis) ---")
+        strategy_kwargs = {"topk": 50, "n_drop": 5}
+        exchange_kwargs = {"open_cost": 0.0005, "close_cost": 0.0015, "min_cost": 5, "deal_price": "close"}
 
-        # By removing recorder_name, we use the default file-based recorder, which is more stable.
-        with R.start(experiment_name="model_evaluation_streamlit", resume=False):
-            recorder = R.get_recorder()
+        strategy_for_eval = TopkDropoutStrategy(model=model, dataset=dataset, **strategy_kwargs)
 
-            # 1. Generate prediction and run Signal Analysis
-            print("\n--- [1/2] 开始信号分析 (Signal Analysis) ---")
-            # Use the dataset with `drop_raw=False` for all record generation
-            sr = SignalRecord(model, dataset_for_eval, recorder)
-            sr.generate()
-            prediction_df = recorder.load_object("pred.pkl")
-            sar = SigAnaRecord(recorder, ana_long_short=False)
-            sar.generate()
+        daily_report_df, portfolio_report_df = run_backtest_and_analysis(
+            start_time=test_period[0],
+            end_time=test_period[1],
+            strategy=strategy_for_eval,
+            exchange_kwargs=exchange_kwargs
+        )
+        print("--- 投资组合分析完成 ---")
 
-            # Create the signal report DataFrame
-            ic_series = recorder.load_object("sig_analysis/ic.pkl")
-            ric_series = recorder.load_object("sig_analysis/ric.pkl")
-            metrics = {
-                "IC": ic_series.mean(), "ICIR": ic_series.mean() / ic_series.std(),
-                "Rank IC": ric_series.mean(), "Rank ICIR": ric_series.mean() / ric_series.std(),
-            }
-            signal_report = pd.DataFrame.from_dict(metrics, orient="index", columns=["value"])
-            print("--- 信号分析完成 ---")
+        # --- 3. Signal Analysis (IC Calculation) ---
+        print("\n--- [2/2] 开始信号分析 (Signal Analysis) ---")
+        # This is the critical step that caused the merge error before.
+        # We must carefully align the prediction and the label.
 
-            # 2. Run Portfolio Analysis
-            print("\n--- [2/2] 开始投资组合分析 (Portfolio Analysis) ---")
-            instruments = config["dataset"]["kwargs"]["handler"]["kwargs"].get("instruments", "csi300")
-            benchmark = "SH000300" if instruments == "csi300" else "SH000905"
-            test_period = config["dataset"]["kwargs"]["segments"]["test"]
-            port_analysis_config = { "strategy": { "class": "TopkDropoutStrategy", "module_path": "qlib.contrib.strategy", "kwargs": { "signal": prediction_df, "topk": 50, "n_drop": 5, }, }, "backtest": { "start_time": test_period[0], "end_time": test_period[1], "account": 100000000, "benchmark": benchmark, "exchange_kwargs": { "freq": "day", "limit_threshold": 0.095, "deal_price": "close", "open_cost": 0.0005, "close_cost": 0.0015, "min_cost": 5, }, }, }
-            par = PortAnaRecord(recorder, port_analysis_config, risk_analysis_freq="day")
-            par.generate()
+        # Get predictions
+        prediction_df = model.predict(dataset, segment="test")
+        if not isinstance(prediction_df.index, pd.MultiIndex):
+             prediction_df = prediction_df.set_index(["datetime", "instrument"])
 
-            # Load artifacts for the frontend
-            portfolio_report = recorder.load_object("portfolio_analysis/port_analysis_1day.pkl")
-            daily_report_for_graph = recorder.load_object("portfolio_analysis/report_normal_1day.pkl")
-            print("--- 投资组合分析完成 ---")
+        # Get labels
+        # IMPORTANT: We need `drop_raw=False` to get the 'label' column.
+        # We create a temporary, modified dataset config for this purpose.
+        label_dataset_config = copy.deepcopy(config["dataset"])
+        label_dataset_config["kwargs"]["handler"]["kwargs"]["drop_raw"] = False
+        label_dataset = init_instance_by_config(label_dataset_config)
 
-            # 3. Prepare data for IC graph
-            print("\n--- [3/3] 准备IC图表数据 ---")
-            # The loaded prediction_df may not have a MultiIndex.
-            # We must set it correctly before joining.
-            if not isinstance(prediction_df.index, pd.MultiIndex):
-                prediction_df = prediction_df.set_index(["datetime", "instrument"])
+        # Prepare the test segment data including the label
+        pred_label_df = label_dataset.prepare("test", col_set=["label"])
 
-            # Use the single, consistent dataset instance
-            pred_label = dataset_for_eval.prepare("test", col_set=["feature", "label"])
-            pred_label = pred_label.join(prediction_df)
-            pred_label = pred_label.dropna()
-            ic_series_for_graph = pred_label.groupby("datetime").apply(lambda df: df["score"].corr(df["label"]))
-            print("--- IC图表数据准备完毕 ---")
+        # Join predictions and labels. This is where the error occurred.
+        # Both DataFrames must have the same MultiIndex (datetime, instrument).
+        pred_label_df = pred_label_df.join(prediction_df, how="inner")
+        pred_label_df.dropna(inplace=True)
 
-    eval_log = log_stream.buffer if isinstance(log_stream, StreamlitLogHandler) else log_stream.getvalue()
+        # Calculate IC and Rank IC
+        ic_series = pred_label_df.groupby("datetime").apply(lambda df: df["score"].corr(df["label"]))
+        rank_ic_series = pred_label_df.groupby("datetime").apply(lambda df: df["score"].corr(df["label"], method="spearman"))
+
+        metrics = {
+            "IC": ic_series.mean(),
+            "ICIR": ic_series.mean() / ic_series.std(),
+            "Rank IC": rank_ic_series.mean(),
+            "Rank ICIR": rank_ic_series.mean() / rank_ic_series.std(),
+        }
+        signal_report_df = pd.DataFrame.from_dict(metrics, orient="index", columns=["value"])
+        print("--- 信号分析完成 ---")
+
+    eval_log = log_stream.getvalue()
+
+    # Consolidate results into a dictionary for the frontend
     results = {
-        "signal_report": signal_report,
-        "portfolio_report": portfolio_report,
-        "daily_report": daily_report_for_graph,
-        "ic_series": ic_series_for_graph,
+        "signal_report": signal_report_df,
+        "portfolio_report": portfolio_report_df,
+        "daily_report": daily_report_df,
+        "ic_series": ic_series, # Pass the raw series for plotting
     }
+
+    # Clean up memory
+    del model, dataset, label_dataset, pred_label_df, prediction_df
+    gc.collect()
+
     return results, eval_log
