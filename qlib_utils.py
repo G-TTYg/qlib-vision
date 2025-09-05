@@ -507,32 +507,29 @@ def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: st
         exchange_kwargs=exchange_kwargs
     )
 
-    # --- 3. Generate Performance Metrics (KPIs) and Risk Figures ---
-    # This logic is now aligned with the official qlib documentation.
+    # --- 3. Generate KPI Metrics & Risk Analysis DataFrame ---
+    # This part is aligned with the official qlib documentation for `risk_analysis_graph`
     analysis = dict()
     analysis["excess_return_without_cost"] = risk_analysis(
-        report_df["return"] - report_df["bench"],
-        freq='day'
+        report_df["return"] - report_df["bench"], freq="day"
     )
     analysis["excess_return_with_cost"] = risk_analysis(
-        report_df["return"] - report_df["bench"] - report_df["cost"],
-        freq='day'
+        report_df["return"] - report_df["bench"] - report_df["cost"], freq="day"
     )
+    analysis_df = pd.concat(analysis) # This creates the MultiIndex DataFrame
 
-    # pd.concat creates the MultiIndex DataFrame required by risk_analysis_graph
-    analysis_df = pd.concat(analysis)
-
-    # Generate the risk figures using the created analysis_df
-    risk_figures = analysis_position.risk_analysis_graph(analysis_df, report_df, show_notebook=False)
-
-
-    # --- 4. Generate Main Equity Curve Visualization ---
+    # --- 4. Generate Visualizations ---
+    # Manually create the main equity curve for direct control over its appearance
     equity_curve_fig = px.line(
         report_df.rename(columns={'account': '策略', 'bench': '基准'}),
         x=report_df.index,
         y=['策略', '基准'],
         title="策略 vs. 基准 (扣除成本后)"
     )
+
+    # Generate the other risk figures using the standard qlib function
+    risk_figures = analysis_position.risk_analysis_graph(analysis_df, report_df, show_notebook=False)
+
 
     # --- 5. Consolidate and Return Results ---
     results = {

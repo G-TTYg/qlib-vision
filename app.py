@@ -599,6 +599,9 @@ def backtesting_and_analysis_page():
         except KeyError:
             st.warning("无法从分析报告中提取关键绩效指标。报告的格式可能不是预期的。")
 
+        equity_curve_fig = results["equity_curve_fig"]
+        risk_figures = results["risk_figures"]
+
         # --- Section 2: Equity Curve ---
         st.subheader("资金曲线")
         st.plotly_chart(equity_curve_fig, use_container_width=True)
