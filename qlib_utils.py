@@ -320,13 +320,19 @@ def predict(model_path_str: str, qlib_dir: str, prediction_date: str):
     prediction = prediction.reset_index().rename(columns={'instrument': 'StockID', 'datetime': 'Date'})
     return prediction.sort_values(by="score", ascending=False)
 
-def backtest_strategy(model_path_str: str, qlib_dir: str, start_time: str, end_time: str, strategy_kwargs: dict, exchange_kwargs: dict, log_placeholder=None):
+def run_backtest_and_analysis(model_path_str: str, qlib_dir: str, start_time: str, end_time: str, strategy_kwargs: dict, exchange_kwargs: dict, log_placeholder=None):
+    """
+    Runs a single backtest and generates a comprehensive analysis report.
+    """
     import qlib
     from qlib.utils import init_instance_by_config
     from qlib.contrib.strategy import TopkDropoutStrategy
     from qlib.contrib.evaluate import backtest_daily, risk_analysis
+    import qlib.contrib.report as qcr
+
     qlib.auto_init(provider_uri=qlib_dir)
 
+    # --- 1. Load Model and Config ---
     model_path = Path(model_path_str)
     config_path = model_path.with_suffix(".yaml")
     if not config_path.exists():
@@ -334,30 +340,49 @@ def backtest_strategy(model_path_str: str, qlib_dir: str, start_time: str, end_t
     with open(config_path, 'r') as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
     model = Model.load(model_path)
+
+    # --- 2. Prepare Dataset and Strategy ---
     config["dataset"]["kwargs"]["handler"]["kwargs"]["start_time"] = start_time
     config["dataset"]["kwargs"]["handler"]["kwargs"]["end_time"] = end_time
-    config["dataset"]["kwargs"]["segments"]["test"] = (start_time, end_time)
+    config["dataset"]["kwargs"]["segments"] = {"test": (start_time, end_time)}
     dataset = init_instance_by_config(config["dataset"])
     strategy = TopkDropoutStrategy(model=model, dataset=dataset, **strategy_kwargs)
 
-    # Redirect stdout/stderr to the Streamlit placeholder if provided
+    # --- 3. Run Backtest (with logging) ---
     log_stream = StreamlitLogHandler(log_placeholder) if log_placeholder else io.StringIO()
     with redirect_stdout(log_stream), redirect_stderr(log_stream):
-        print("--- 策略回测开始 ---")
-        # The backtest_daily function now primarily returns the daily portfolio results
-        report_df, _ = backtest_daily(start_time=start_time, end_time=end_time, strategy=strategy, exchange_kwargs=exchange_kwargs)
-        print("--- 策略回测结束 ---")
+        print("--- [1/2] 开始运行回测... ---")
+        report_df, positions_df = backtest_daily(
+            start_time=start_time,
+            end_time=end_time,
+            strategy=strategy,
+            exchange_kwargs=exchange_kwargs
+        )
+        print("--- 回测运行结束 ---")
 
-    # We need to manually calculate the analysis metrics using risk_analysis
-    analysis = dict()
-    analysis["excess_return_without_cost"] = risk_analysis(report_df["return"] - report_df["bench"])
-    analysis["excess_return_with_cost"] = risk_analysis(report_df["return"] - report_df["bench"] - report_df["cost"])
-    analysis["return"] = risk_analysis(report_df["return"])
+        # --- 4. Perform Analysis ---
+        print("--- [2/2] 开始计算分析指标... ---")
+        # 4.1. Basic portfolio analysis (from backtest_strategy)
+        analysis = dict()
+        analysis["excess_return_without_cost"] = risk_analysis(report_df["return"] - report_df["bench"])
+        analysis["excess_return_with_cost"] = risk_analysis(
+            report_df["return"] - report_df["bench"] - report_df["cost"]
+        )
+        analysis["return"] = risk_analysis(report_df["return"])
+        analysis_df = pd.concat(analysis)
 
-    analysis_df = pd.concat(analysis)  # This will be a DataFrame with metrics
+        # 4.2. Risk analysis graphs (from get_position_analysis)
+        risk_figs = qcr.analysis_position.risk_analysis_graph(analysis_df.copy(), report_df.copy(), show_notebook=False)
+        print("--- 分析指标计算结束 ---")
 
-    # Return both the daily report for plotting and the analysis report for metrics
-    return report_df, analysis_df
+    # --- 5. Consolidate Results ---
+    results = {
+        "report_df": report_df,
+        "positions_df": positions_df,
+        "analysis_df": analysis_df,
+        "risk_figures": risk_figs,
+    }
+    return results
 
 def get_historical_prediction(model_path_str: str, qlib_dir: str, stock_id: str, start_date: str, end_date: str, placeholder=None):
     # This can be slow as it predicts day by day
@@ -509,57 +534,3 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None, tes
 
     return results, eval_log
 
-def get_position_analysis(model_path_str: str, qlib_dir: str, start_time: str, end_time: str, strategy_kwargs: dict, exchange_kwargs: dict):
-    """
-    Runs a backtest and returns the detailed position information along with performance analysis figures.
-    """
-    import qlib
-    from qlib.utils import init_instance_by_config
-    from qlib.contrib.strategy import TopkDropoutStrategy
-    from qlib.contrib.evaluate import backtest_daily, risk_analysis
-    import qlib.contrib.report as qcr
-
-    qlib.auto_init(provider_uri=qlib_dir)
-
-    # Load model and config
-    model_path = Path(model_path_str)
-    config_path = model_path.with_suffix(".yaml")
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config file {config_path} not found for model {model_path.name}")
-    with open(config_path, 'r') as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
-    model = Model.load(model_path)
-
-    # Prepare dataset for the backtest period
-    config["dataset"]["kwargs"]["handler"]["kwargs"]["start_time"] = start_time
-    config["dataset"]["kwargs"]["handler"]["kwargs"]["end_time"] = end_time
-    config["dataset"]["kwargs"]["segments"] = {"test": (start_time, end_time)}
-    dataset = init_instance_by_config(config["dataset"])
-
-    # Instantiate strategy
-    strategy = TopkDropoutStrategy(model=model, dataset=dataset, **strategy_kwargs)
-
-    # Run backtest and capture both report and positions
-    report_df, positions_df = backtest_daily(
-        start_time=start_time,
-        end_time=end_time,
-        strategy=strategy,
-        exchange_kwargs=exchange_kwargs
-    )
-
-    # Generate risk analysis dataframe and figures, similar to the backtesting page
-    analysis = dict()
-    analysis["excess_return_without_cost"] = risk_analysis(report_df["return"] - report_df["bench"])
-    analysis["excess_return_with_cost"] = risk_analysis(
-        report_df["return"] - report_df["bench"] - report_df["cost"]
-    )
-    analysis_df = pd.concat(analysis)  # Create a multi-index DataFrame as expected by the graphing function
-
-    risk_figs = qcr.analysis_position.risk_analysis_graph(analysis_df, report_df, show_notebook=False)
-
-    results = {
-        "positions": positions_df,
-        "report": report_df,
-        "risk_figures": risk_figs,
-    }
-    return results
