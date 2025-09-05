@@ -10,6 +10,9 @@ streamlit
 # Plotting library used in the app
 plotly
 
+# Dependency for qlib's reporting and analysis functions
+statsmodels
+
 # Dependencies for the data download script
 yahooquery
 requests_cache
