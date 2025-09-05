@@ -447,8 +447,9 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
             sar.generate()
 
             # Create the signal report DataFrame
-            ic_series = recorder.load_object("sig_analysis/ic.pkl")
-            ric_series = recorder.load_object("sig_analysis/ric.pkl")
+            # NOTE: InMemoryRecorder seems to flatten artifact paths, so we load without prefixes.
+            ic_series = recorder.load_object("ic.pkl")
+            ric_series = recorder.load_object("ric.pkl")
             metrics = {
                 "IC": ic_series.mean(), "ICIR": ic_series.mean() / ic_series.std(),
                 "Rank IC": ric_series.mean(), "Rank ICIR": ric_series.mean() / ric_series.std(),
@@ -466,8 +467,9 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
             par.generate()
 
             # Load artifacts for the frontend
-            portfolio_report = recorder.load_object("portfolio_analysis/port_analysis_1day.pkl")
-            daily_report_for_graph = recorder.load_object("portfolio_analysis/report_normal_1day.pkl")
+            # NOTE: InMemoryRecorder seems to flatten artifact paths, so we load without prefixes.
+            portfolio_report = recorder.load_object("port_analysis_1day.pkl")
+            daily_report_for_graph = recorder.load_object("report_normal_1day.pkl")
             print("--- 投资组合分析完成 ---")
 
             # 3. Prepare data for IC graph
