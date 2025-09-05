@@ -401,7 +401,7 @@ def get_model_info(model_path_str: str):
 
     return info
 
-def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
+def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None, test_period: tuple = None):
     """
     Evaluates a model using the high-level functions from `qlib.contrib.report`
     as requested by the user. This function now generates Plotly figures directly.
@@ -426,8 +426,22 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
             config = yaml.load(f, Loader=yaml.FullLoader)
 
         model = Model.load(model_path)
+
+        # If a test_period is provided by the user, use it. Otherwise, use the one from the config file.
+        if test_period is None:
+            # No override provided, use the test period from the model's original config
+            test_period = config["dataset"]["kwargs"]["segments"]["test"]
+        else:
+            # If the test_period is manually provided, we need to update the dataset's configuration
+            # to ensure the data loaded by the handler matches the new evaluation period.
+            config["dataset"]["kwargs"]["segments"]["test"] = test_period
+            # The handler's start and end time must also be updated to cover the new period.
+            # We provide a 2-year buffer before the start date for feature calculation lookback.
+            start_date_buffer = pd.to_datetime(test_period[0]) - pd.DateOffset(years=2)
+            config["dataset"]["kwargs"]["handler"]["kwargs"]["start_time"] = start_date_buffer.strftime("%Y-%m-%d")
+            config["dataset"]["kwargs"]["handler"]["kwargs"]["end_time"] = test_period[1]
+
         dataset = init_instance_by_config(config["dataset"])
-        test_period = config["dataset"]["kwargs"]["segments"]["test"]
         print(f"模型和配置已加载。测试期: {test_period[0]} to {test_period[1]}")
 
         # --- 2. Prepare pred_label DataFrame (This is the fix) ---
@@ -464,7 +478,8 @@ def evaluate_model(model_path_str: str, qlib_dir: str, log_placeholder=None):
         # --- 3. Generate Signal Analysis Figures ---
         print("\n--- [2/3] 生成信号分析报告 ---")
         # Use the high-level reporting function as requested
-        signal_figs = qcr.analysis_model.model_performance_graph(
+        from qlib.contrib.report.analysis_model import analysis_model_performance
+        signal_figs = analysis_model_performance.model_performance_graph(
             pred_label_df, show_notebook=False
         )
         print("信号分析报告生成完毕。")

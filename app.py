@@ -2,6 +2,7 @@ import streamlit as st
 import os
 # Suppress the GitPython warning
 os.environ['GIT_PYTHON_REFRESH'] = 'quiet'
+import yaml
 import qlib
 from qlib.constant import REG_CN
 from pathlib import Path
@@ -502,12 +503,33 @@ def backtesting_page():
     if not available_models:
         st.warning(f"在 '{models_dir_path}' 中未找到模型。")
         return
-    selected_model_name = st.selectbox("选择一个模型文件进行回测", available_models)
-    selected_model_path = str(models_dir_path / selected_model_name)
+    selected_model_name = st.selectbox("选择一个模型文件进行回测", available_models, key="bt_model_select")
+
+    # --- Date Override UI ---
+    # Set fallback default dates
+    start_date_val = datetime.date(2022, 1, 1)
+    end_date_val = datetime.date.today() - datetime.timedelta(days=1)
+
+    # If a model is selected, load its config to set the default dates
+    if selected_model_name:
+        config_path = (models_dir_path / selected_model_name).with_suffix(".yaml")
+        if config_path.exists():
+            try:
+                with open(config_path, "r") as f:
+                    config = yaml.load(f, Loader=yaml.FullLoader)
+                default_test_period = config.get("dataset", {}).get("kwargs", {}).get("segments", {}).get("test")
+                if default_test_period and len(default_test_period) == 2:
+                    start_date_val = pd.to_datetime(default_test_period[0]).date()
+                    end_date_val = pd.to_datetime(default_test_period[1]).date()
+            except Exception as e:
+                st.warning(f"无法加载模型配置文件 {config_path.name} 中的默认日期: {e}")
+
+    selected_model_path = str(models_dir_path / selected_model_name) if selected_model_name else None
     st.subheader("回测参数配置")
+    st.info("默认加载模型训练时使用的测试集时间范围，可手动修改。")
     col1, col2 = st.columns(2)
-    start_date = col1.date_input("开始日期", datetime.date.today() - datetime.timedelta(days=365))
-    end_date = col2.date_input("结束日期", datetime.date.today() - datetime.timedelta(days=1))
+    start_date = col1.date_input("开始日期", value=start_date_val, key="bt_start")
+    end_date = col2.date_input("结束日期", value=end_date_val, key="bt_end")
     st.subheader("策略参数 (Top-K Dropout)")
     c1, c2 = st.columns(2)
     topk = c1.number_input("买入Top-K只股票", 1, 100, 50)
@@ -603,6 +625,33 @@ def model_evaluation_page():
 
     selected_model_name = st.selectbox("选择一个模型文件进行评估", available_models, key="eval_model_select")
 
+    # --- Date Override UI ---
+    # Set default dates first
+    start_date_val = datetime.date(2022, 1, 1)
+    end_date_val = datetime.date.today() - datetime.timedelta(days=1)
+
+    # If a model is selected, try to load its config to set better default dates
+    if selected_model_name:
+        config_path = (models_dir_path / selected_model_name).with_suffix(".yaml")
+        if config_path.exists():
+            try:
+                with open(config_path, "r") as f:
+                    config = yaml.load(f, Loader=yaml.FullLoader)
+                # Safely get the test period from the config
+                default_test_period = config.get("dataset", {}).get("kwargs", {}).get("segments", {}).get("test")
+                if default_test_period and len(default_test_period) == 2:
+                    start_date_val = pd.to_datetime(default_test_period[0]).date()
+                    end_date_val = pd.to_datetime(default_test_period[1]).date()
+            except Exception as e:
+                st.warning(f"无法加载模型配置文件 {config_path.name} 中的默认日期: {e}")
+
+    st.subheader("评估周期配置 (可手动修改)")
+    st.info("默认加载模型训练时使用的测试集时间范围。")
+    col1, col2 = st.columns(2)
+    eval_start_date = col1.date_input("开始日期", value=start_date_val, key="eval_start")
+    eval_end_date = col2.date_input("结束日期", value=end_date_val, key="eval_end")
+    # --- End of Date Override UI ---
+
     st.subheader("评估日志")
     with st.container(height=400):
         log_placeholder = st.empty()
@@ -613,13 +662,23 @@ def model_evaluation_page():
         if not selected_model_name:
             st.warning("请选择一个模型。")
             st.session_state.eval_results = None
+        elif eval_start_date >= eval_end_date:
+            st.error("开始日期必须早于结束日期！")
+            st.session_state.eval_results = None
         else:
             st.session_state.evaluation_log = "" # Clear previous logs
             log_placeholder.empty()
             with st.spinner("正在执行评估，这可能需要几分钟时间..."):
                 try:
                     model_path = str(models_dir_path / selected_model_name)
-                    results, eval_log = evaluate_model(model_path, qlib_dir, log_placeholder=log_placeholder)
+                    # Pass the potentially overridden test period to the backend
+                    test_period_override = (eval_start_date.strftime("%Y-%m-%d"), eval_end_date.strftime("%Y-%m-%d"))
+                    results, eval_log = evaluate_model(
+                        model_path,
+                        qlib_dir,
+                        log_placeholder=log_placeholder,
+                        test_period=test_period_override
+                    )
                     st.session_state.eval_results = results
                     st.session_state.evaluation_log = eval_log
                     log_placeholder.code(eval_log, language='log') # Display final log
